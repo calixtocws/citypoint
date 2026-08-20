@@ -45,9 +45,554 @@ class CustomerPayload(BaseModel):
     licensee:str; legal_name:str|None=None; booth_group:str|None=None; vlan_id:int|None=None; subnet_cidr:str|None=None; fortigate_interface:str|None=None; notes:str|None=None
 class TogglePayload(BaseModel):
     interface_name:str; policy_id:str|None=None; enable:bool; apply:bool=False
+    
+@app.get("/test", response_class=HTMLResponse)
+def test():
+    return render_home()[:500]
+    
 @app.get('/',response_class=HTMLResponse)
+#@app.get("/")
 def home():
-    return r'''<!doctype html><html><head><meta charset="utf-8"><title>CityPoint CMDB v3</title><style>body{font-family:Segoe UI,Arial;margin:18px;background:#f5f6f8}.card{background:#fff;border:1px solid #ddd;border-radius:8px;padding:14px;margin:12px 0}button{background:#2563eb;color:#fff;border:0;padding:7px 10px;border-radius:5px;margin:3px}button.red{background:#b91c1c}button.green{background:#15803d}button.gray{background:#64748b}input,select{padding:6px;margin:3px;border:1px solid #bbb;border-radius:4px;min-width:150px}table{border-collapse:collapse;width:100%;font-size:12px;background:white}th{background:#1f4e78;color:white;position:sticky;top:0}td,th{border-bottom:1px solid #eee;padding:5px;text-align:left}tr.deleted{color:#888;background:#f1f5f9}pre{background:#0b1020;color:#75ff99;padding:10px;overflow:auto;max-height:300px}.hint{color:#475569}.dashgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(175px,1fr));gap:10px}.dashcard{border:1px solid #dbe3ee;border-radius:8px;padding:12px;background:#f8fbff}.dashcard h3{margin:0 0 8px;color:#1f4e78}.dashvalue{font-size:24px;font-weight:700}.dashdetail{font-size:12px;color:#475569;margin-top:4px}</style></head><body><h1>CityPoint CMDB v3.2</h1><div class="card"><h2>Dashboard</h2><div id="dashboard" class="dashgrid"><p>Loading...</p></div></div><div class="card"><h2>Import original Excel</h2><input type="file" id="file"><button onclick="upload()">Import</button><button onclick="refreshAll()">Refresh UI</button><button onclick="window.location='/api/report.xlsx'">Download Excel Report</button><span id="msg"></span><p class="hint">Multi-VLAN source rows are imported with VLAN blank and notes populated.</p></div><div class="card"><h2>Add / Edit Customer</h2><input id="cid" placeholder="ID for edit only"><input id="licensee" placeholder="Licensee"><input id="legal" placeholder="Legal Name"><select id="booth"></select><select id="vlan"></select><select id="subnet"></select><select id="fgif"></select><input id="notes" placeholder="Notes"><button onclick="saveCustomer()">Add / Save Edit</button><button class="gray" onclick="clearForm()">Clear Add Form</button></div><div class="card"><h2>Customer List</h2><div id="customers"></div></div><div class="card"><h2>Object Pools: available/used</h2><button onclick="loadObjects()">Refresh Pools</button><div id="objects"></div></div><div class="card"><h2>FortiGate</h2><button onclick="fgRefresh()">Pull FG Interfaces/Policies</button><button onclick="loadFg()">Show FG Interfaces vs Customer</button><div id="fg"></div></div><div class="card"><h2>FortiGate Reconciliation</h2><button onclick="loadReconciliation()">Run Reconciliation</button><div id="reconSummary" class="dashgrid"></div><div id="reconciliation"></div></div><div class="card"><h2>Interface / Policy Operations</h2><select id="opif"></select><input id="oppolicy" placeholder="Policy ID"><button class="green" onclick="toggle(true,false)">Dry Run Enable</button><button class="red" onclick="toggle(false,false)">Dry Run Disable</button><pre id="opresult"></pre></div><script>let currentCustomers=[];async function j(url,opts){let r=await fetch(url,opts);let t=await r.text();try{return JSON.parse(t)}catch(e){return {error:t}}}function esc(s){return String(s??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;')}function table(rows,actions=false){if(!rows||!rows.length)return '<p>No data</p>';let keys=Object.keys(rows[0]);let h='<table><tr>'+keys.map(k=>'<th>'+esc(k)+'</th>').join('')+(actions?'<th>Operations</th>':'')+'</tr>';for(let row of rows){h+='<tr class="'+(row.status==='deleted'?'deleted':'')+'">'+keys.map(k=>'<td>'+esc(row[k])+'</td>').join('');if(actions)h+=`<td><button onclick="editRow(${row.id})">Edit</button><button class="red" onclick="delCustomer(${row.id})">Delete</button></td>`;h+='</tr>'}return h+'</table>'}async function upload(){let f=file.files[0];let fd=new FormData();fd.append('file',f);msg.innerText=JSON.stringify(await j('/api/import/excel',{method:'POST',body:fd}));refreshAll()}async function loadDashboard(){let d=await j('/api/dashboard');dashboard.innerHTML=`<div class="dashcard"><h3>Customers</h3><div class="dashvalue">${d.customers.active}</div><div class="dashdetail">Active | ${d.customers.deleted} deleted | ${d.customers.total} total</div></div><div class="dashcard"><h3>Booths</h3><div class="dashvalue">${d.booths.used} / ${d.booths.total}</div><div class="dashdetail">Used | ${d.booths.available} available</div></div><div class="dashcard"><h3>VLANs</h3><div class="dashvalue">${d.vlans.used} / ${d.vlans.total}</div><div class="dashdetail">Used | ${d.vlans.available} available</div></div><div class="dashcard"><h3>Subnets</h3><div class="dashvalue">${d.subnets.used} / ${d.subnets.total}</div><div class="dashdetail">Used | ${d.subnets.available} available</div></div><div class="dashcard"><h3>FortiGate Interfaces</h3><div class="dashvalue">${d.fortigate_interfaces.assigned} / ${d.fortigate_interfaces.total_cached}</div><div class="dashdetail">Assigned | ${d.fortigate_interfaces.unassigned} unassigned</div></div>`}async function loadDropdowns(){let d=await j('/api/dropdowns');booth.innerHTML='<option value="">-- booth --</option>'+d.booths.map(x=>`<option value="${esc(x.booth_group)}">${esc(x.booth_group)} (${x.status})</option>`).join('');vlan.innerHTML='<option value="">-- vlan --</option>'+d.vlans.map(x=>`<option value="${x.vlan_id}">${x.vlan_id} (${x.status})</option>`).join('');subnet.innerHTML='<option value="">-- subnet --</option>'+d.subnets.map(x=>`<option value="${x.cidr}">${x.cidr} gw ${x.gateway} (${x.status})</option>`).join('');fgif.innerHTML='<option value="">-- FortiGate interface --</option>'+d.fg_interfaces.map(x=>`<option value="${esc(x.name)}">${esc(x.name)}</option>`).join('');opif.innerHTML=fgif.innerHTML}async function loadCustomers(){currentCustomers=await j('/api/customers');customers.innerHTML=table(currentCustomers,true)}async function loadObjects(){let o=await j('/api/objects');objects.innerHTML='<h3>Booths</h3>'+table(o.booths)+'<h3>VLANs</h3>'+table(o.vlans)+'<h3>Subnets</h3>'+table(o.subnets)}async function refreshAll(){await loadDashboard();await loadDropdowns();await loadCustomers();await loadObjects()}function setSelect(sel,val){let s=String(val??'');sel.value=s;if(sel.value!==s&&s){let opt=document.createElement('option');opt.value=s;opt.textContent=s+' (current)';sel.appendChild(opt);sel.value=s}}function editRow(id){let r=currentCustomers.find(x=>x.id===id);if(!r)return;cid.value=r.id;licensee.value=r.licensee||'';legal.value=r.legal_name||'';setSelect(booth,r.booth_group);setSelect(vlan,r.vlan_id);setSelect(subnet,r.subnet_cidr);setSelect(fgif,r.fortigate_interface);notes.value=r.notes||'';window.scrollTo({top:0,behavior:'smooth'})}function clearForm(){cid.value='';licensee.value='';legal.value='';booth.value='';vlan.value='';subnet.value='';fgif.value='';notes.value=''}async function saveCustomer(){let payload={licensee:licensee.value,legal_name:legal.value,booth_group:booth.value||null,vlan_id:vlan.value?Number(vlan.value):null,subnet_cidr:subnet.value||null,fortigate_interface:fgif.value||null,notes:notes.value};let id=cid.value.trim();let url=id?'/api/customers/'+id:'/api/customers';let method=id?'PUT':'POST';alert(JSON.stringify(await j(url,{method,headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})));clearForm();refreshAll()}async function delCustomer(id){if(!confirm('Delete customer assignment '+id+'?'))return;alert(JSON.stringify(await j('/api/customers/'+id,{method:'DELETE'})));refreshAll()}async function fgRefresh(){fg.innerHTML='<p>Loading...</p>';fg.innerHTML='<pre>'+JSON.stringify(await j('/api/fortigate/refresh',{method:'POST'}),null,2)+'</pre>';refreshAll()}async function loadFg(){fg.innerHTML=table(await j('/api/fortigate/report'))}async function loadReconciliation(){let d=await j('/api/reconciliation');let s=d.summary||{};reconSummary.innerHTML=`<div class="dashcard"><h3>Matched</h3><div class="dashvalue">${s.match||0}</div></div><div class="dashcard"><h3>Review</h3><div class="dashvalue">${s.review||0}</div></div><div class="dashcard"><h3>Missing</h3><div class="dashvalue">${s.missing||0}</div></div><div class="dashcard"><h3>Unassigned FG</h3><div class="dashvalue">${s.unassigned||0}</div></div>`;reconciliation.innerHTML=table(d.results||[])}async function toggle(enable,apply){let payload={interface_name:opif.value,policy_id:oppolicy.value||null,enable,apply};opresult.textContent=JSON.stringify(await j('/api/fortigate/toggle',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),null,2)}refreshAll()</script></body></html>'''
+    return render_home()
+
+def render_home():
+    #return r'''<!doctype html><html><head><meta charset="utf-8"><title>CityPoint CMDB v3</title><style>body{font-family:Segoe UI,Arial;margin:18px;background:#f5f6f8}.card{background:#fff;border:1px solid #ddd;border-radius:8px;padding:14px;margin:12px 0}button{background:#2563eb;color:#fff;border:0;padding:7px 10px;border-radius:5px;margin:3px}button.red{background:#b91c1c}button.green{background:#15803d}button.gray{background:#64748b}input,select{padding:6px;margin:3px;border:1px solid #bbb;border-radius:4px;min-width:150px}table{border-collapse:collapse;width:100%;font-size:12px;background:white}th{background:#1f4e78;color:white;position:sticky;top:0}td,th{border-bottom:1px solid #eee;padding:5px;text-align:left}tr.deleted{color:#888;background:#f1f5f9}pre{background:#0b1020;color:#75ff99;padding:10px;overflow:auto;max-height:300px}.hint{color:#475569}.dashgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(175px,1fr));gap:10px}.dashcard{border:1px solid #dbe3ee;border-radius:8px;padding:12px;background:#f8fbff}.dashcard h3{margin:0 0 8px;color:#1f4e78}.dashvalue{font-size:24px;font-weight:700}.dashdetail{font-size:12px;color:#475569;margin-top:4px}</style></head><body><h1>CityPoint CMDB v3.2</h1><div class="card"><h2>Dashboard</h2><div id="dashboard" class="dashgrid"><p>Loading...</p></div></div><div class="card"><h2>Import original Excel</h2><input type="file" id="file"><button onclick="upload()">Import</button><button onclick="refreshAll()">Refresh UI</button><button onclick="window.location='/api/report.xlsx'">Download Excel Report</button><span id="msg"></span><p class="hint">Multi-VLAN source rows are imported with VLAN blank and notes populated.</p></div><div class="card"><h2>Add / Edit Customer</h2><input id="cid" placeholder="ID for edit only"><input id="licensee" placeholder="Licensee"><input id="legal" placeholder="Legal Name"><select id="booth"></select><select id="vlan"></select><select id="subnet"></select><select id="fgif"></select><input id="notes" placeholder="Notes"><button onclick="saveCustomer()">Add / Save Edit</button><button class="gray" onclick="clearForm()">Clear Add Form</button></div><div class="card"><h2>Customer List</h2><div id="customers"></div></div><div class="card"><h2>Object Pools: available/used</h2><button onclick="loadObjects()">Refresh Pools</button><div id="objects"></div></div><div class="card"><h2>FortiGate</h2><button onclick="fgRefresh()">Pull FG Interfaces/Policies</button><button onclick="loadFg()">Show FG Interfaces vs Customer</button><div id="fg"></div></div><div class="card"><h2>FortiGate Reconciliation</h2><button onclick="loadReconciliation()">Run Reconciliation</button><div id="reconSummary" class="dashgrid"></div><div id="reconciliation"></div></div><div class="card"><h2>Interface / Policy Operations</h2><select id="opif"></select><input id="oppolicy" placeholder="Policy ID"><button class="green" onclick="toggle(true,false)">Dry Run Enable</button><button class="red" onclick="toggle(false,false)">Dry Run Disable</button><pre id="opresult"></pre></div><script>let currentCustomers=[];async function j(url,opts){let r=await fetch(url,opts);let t=await r.text();try{return JSON.parse(t)}catch(e){return {error:t}}}function esc(s){return String(s??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;')}function table(rows,actions=false){if(!rows||!rows.length)return '<p>No data</p>';let keys=Object.keys(rows[0]);let h='<table><tr>'+keys.map(k=>'<th>'+esc(k)+'</th>').join('')+(actions?'<th>Operations</th>':'')+'</tr>';for(let row of rows){h+='<tr class="'+(row.status==='deleted'?'deleted':'')+'">'+keys.map(k=>'<td>'+esc(row[k])+'</td>').join('');if(actions)h+=`<td><button onclick="editRow(${row.id})">Edit</button><button class="red" onclick="delCustomer(${row.id})">Delete</button></td>`;h+='</tr>'}return h+'</table>'}async function upload(){let f=file.files[0];let fd=new FormData();fd.append('file',f);msg.innerText=JSON.stringify(await j('/api/import/excel',{method:'POST',body:fd}));refreshAll()}async function loadDashboard(){let d=await j('/api/dashboard');dashboard.innerHTML=`<div class="dashcard"><h3>Customers</h3><div class="dashvalue">${d.customers.active}</div><div class="dashdetail">Active | ${d.customers.deleted} deleted | ${d.customers.total} total</div></div><div class="dashcard"><h3>Booths</h3><div class="dashvalue">${d.booths.used} / ${d.booths.total}</div><div class="dashdetail">Used | ${d.booths.available} available</div></div><div class="dashcard"><h3>VLANs</h3><div class="dashvalue">${d.vlans.used} / ${d.vlans.total}</div><div class="dashdetail">Used | ${d.vlans.available} available</div></div><div class="dashcard"><h3>Subnets</h3><div class="dashvalue">${d.subnets.used} / ${d.subnets.total}</div><div class="dashdetail">Used | ${d.subnets.available} available</div></div><div class="dashcard"><h3>FortiGate Interfaces</h3><div class="dashvalue">${d.fortigate_interfaces.assigned} / ${d.fortigate_interfaces.total_cached}</div><div class="dashdetail">Assigned | ${d.fortigate_interfaces.unassigned} unassigned</div></div>`}async function loadDropdowns(){let d=await j('/api/dropdowns');booth.innerHTML='<option value="">-- booth --</option>'+d.booths.map(x=>`<option value="${esc(x.booth_group)}">${esc(x.booth_group)} (${x.status})</option>`).join('');vlan.innerHTML='<option value="">-- vlan --</option>'+d.vlans.map(x=>`<option value="${x.vlan_id}">${x.vlan_id} (${x.status})</option>`).join('');subnet.innerHTML='<option value="">-- subnet --</option>'+d.subnets.map(x=>`<option value="${x.cidr}">${x.cidr} gw ${x.gateway} (${x.status})</option>`).join('');fgif.innerHTML='<option value="">-- FortiGate interface --</option>'+d.fg_interfaces.map(x=>`<option value="${esc(x.name)}">${esc(x.name)}</option>`).join('');opif.innerHTML=fgif.innerHTML}async function loadCustomers(){currentCustomers=await j('/api/customers');customers.innerHTML=table(currentCustomers,true)}async function loadObjects(){let o=await j('/api/objects');objects.innerHTML='<h3>Booths</h3>'+table(o.booths)+'<h3>VLANs</h3>'+table(o.vlans)+'<h3>Subnets</h3>'+table(o.subnets)}async function refreshAll(){await loadDashboard();await loadDropdowns();await loadCustomers();await loadObjects()}function setSelect(sel,val){let s=String(val??'');sel.value=s;if(sel.value!==s&&s){let opt=document.createElement('option');opt.value=s;opt.textContent=s+' (current)';sel.appendChild(opt);sel.value=s}}function editRow(id){let r=currentCustomers.find(x=>x.id===id);if(!r)return;cid.value=r.id;licensee.value=r.licensee||'';legal.value=r.legal_name||'';setSelect(booth,r.booth_group);setSelect(vlan,r.vlan_id);setSelect(subnet,r.subnet_cidr);setSelect(fgif,r.fortigate_interface);notes.value=r.notes||'';window.scrollTo({top:0,behavior:'smooth'})}function clearForm(){cid.value='';licensee.value='';legal.value='';booth.value='';vlan.value='';subnet.value='';fgif.value='';notes.value=''}async function saveCustomer(){let payload={licensee:licensee.value,legal_name:legal.value,booth_group:booth.value||null,vlan_id:vlan.value?Number(vlan.value):null,subnet_cidr:subnet.value||null,fortigate_interface:fgif.value||null,notes:notes.value};let id=cid.value.trim();let url=id?'/api/customers/'+id:'/api/customers';let method=id?'PUT':'POST';alert(JSON.stringify(await j(url,{method,headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})));clearForm();refreshAll()}async function delCustomer(id){if(!confirm('Delete customer assignment '+id+'?'))return;alert(JSON.stringify(await j('/api/customers/'+id,{method:'DELETE'})));refreshAll()}async function fgRefresh(){fg.innerHTML='<p>Loading...</p>';fg.innerHTML='<pre>'+JSON.stringify(await j('/api/fortigate/refresh',{method:'POST'}),null,2)+'</pre>';refreshAll()}async function loadFg(){fg.innerHTML=table(await j('/api/fortigate/report'))}async function loadReconciliation(){let d=await j('/api/reconciliation');let s=d.summary||{};reconSummary.innerHTML=`<div class="dashcard"><h3>Matched</h3><div class="dashvalue">${s.match||0}</div></div><div class="dashcard"><h3>Review</h3><div class="dashvalue">${s.review||0}</div></div><div class="dashcard"><h3>Missing</h3><div class="dashvalue">${s.missing||0}</div></div><div class="dashcard"><h3>Unassigned FG</h3><div class="dashvalue">${s.unassigned||0}</div></div>`;reconciliation.innerHTML=table(d.results||[])}async function toggle(enable,apply){let payload={interface_name:opif.value,policy_id:oppolicy.value||null,enable,apply};opresult.textContent=JSON.stringify(await j('/api/fortigate/toggle',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),null,2)}refreshAll()</script></body></html>'''
+    #   return f"""
+    return """
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>CityPoint CMDB v3.4</title>
+
+<style>
+body{
+    font-family:Segoe UI,Arial;
+    margin:18px;
+    background:#f5f6f8
+}
+
+.card{
+    background:#fff;
+    border:1px solid #ddd;
+    border-radius:8px;
+    padding:14px;
+    margin:12px 0
+}
+
+button{
+    background:#2563eb;
+    color:#fff;
+    border:0;
+    padding:7px 10px;
+    border-radius:5px;
+    margin:3px
+}
+
+button.red{
+    background:#b91c1c
+}
+
+button.green{
+    background:#15803d
+}
+
+button.gray{
+    background:#64748b
+}
+
+button.nav{
+    background:#1f4e78;
+    font-weight:600
+}
+
+input,select{
+    padding:6px;
+    margin:3px;
+    border:1px solid #bbb;
+    border-radius:4px;
+    min-width:150px
+}
+
+table{
+    border-collapse:collapse;
+    width:100%;
+    font-size:12px;
+    background:white
+}
+
+th{
+    background:#1f4e78;
+    color:white;
+    position:sticky;
+    top:0
+}
+
+td,th{
+    border-bottom:1px solid #eee;
+    padding:5px;
+    text-align:left
+}
+
+tr.deleted{
+    color:#888;
+    background:#f1f5f9
+}
+
+pre{
+    background:#0b1020;
+    color:#75ff99;
+    padding:10px;
+    overflow:auto;
+    max-height:300px
+}
+
+.hint{
+    color:#475569
+}
+
+.dashgrid{
+    display:grid;
+    grid-template-columns:
+        repeat(auto-fit,minmax(175px,1fr));
+    gap:10px
+}
+
+.dashcard{
+    border:1px solid #dbe3ee;
+    border-radius:8px;
+    padding:12px;
+    background:#f8fbff
+}
+
+.dashcard h3{
+    margin:0 0 8px;
+    color:#1f4e78
+}
+
+.dashvalue{
+    font-size:24px;
+    font-weight:700
+}
+
+.dashdetail{
+    font-size:12px;
+    color:#475569;
+    margin-top:4px
+}
+</style>
+
+</head>
+
+<body>
+
+<h1>CityPoint CMDB v3.4</h1>
+
+<div class="card">
+
+<button class="nav"
+        onclick="showTab('dashboardTab')">
+Dashboard
+</button>
+
+<button class="nav"
+        onclick="showTab('customersTab')">
+Customers
+</button>
+
+<button class="nav"
+        onclick="showTab('boothsTab')">
+Booths
+</button>
+
+<button class="nav"
+        onclick="showTab('subnetsTab')">
+Subnets
+</button>
+
+<button class="nav"
+        onclick="showTab('fortigateTab')">
+FortiGate
+</button>
+
+<button class="nav"
+        onclick="showTab('utilitiesTab')">
+Utilities
+</button>
+
+</div>
+
+<div id="dashboardTab">
+
+    <div class="card">
+        <h2>Dashboard</h2>
+
+        <div id="dashboard"
+             class="dashgrid">
+
+            <p>Loading...</p>
+
+        </div>
+    </div>
+
+</div>
+
+<div id="customersTab"
+     style="display:none">
+
+    <div class="card">
+
+        <h2>Add / Edit Customer</h2>
+
+            <input id="cid" placeholder="ID for edit only">
+            <input id="licensee" placeholder="Licensee">
+            <input id="legal" placeholder="Legal Name">
+
+            <select id="booth"></select>
+            <select id="vlan"></select>
+            <select id="subnet"></select>
+            <select id="fgif"></select>
+
+            <input id="notes" placeholder="Notes">
+
+            <button onclick="saveCustomer()">
+                Add / Save Edit
+            </button>
+
+            <button class="gray"
+                    onclick="clearForm()">
+                Clear Add Form
+            </button>
+
+    </div>
+
+    <div class="card">
+
+        <h2>Customer List</h2>
+
+        <input
+            id="customerSearch"
+            placeholder="Search customer / booth / vlan / subnet"
+            onkeyup="filterCustomers()">
+
+        <div id="customers"></div>
+
+    </div>
+
+</div>
+
+<div id="boothsTab"
+     style="display:none">
+
+    <div class="card">
+
+        <h2>Booths</h2>
+
+        <button onclick="loadBooths()">
+            Refresh Booths
+        </button>
+
+        <div id="boothsView"></div>
+
+    </div>
+
+</div>
+
+<div id="subnetsTab"
+     style="display:none">
+
+    <div class="card">
+
+        <h2>Subnets</h2>
+
+        <button onclick="loadSubnets()">
+            Refresh Subnets
+           </button>
+
+            <div id="subnetsView"></div>
+
+        </div>
+
+    </div>
+
+    <!-- FortiGate -->
+
+    <div id="fortigateTab" style="display:none">
+
+        <div class="card">
+
+            <h2>Collect From FortiGate</h2>
+
+            <button onclick="fgRefresh()">
+                Pull FG Interfaces / Policies
+            </button>
+
+            <button onclick="loadFg()">
+                Customer vs FG Interfaces
+            </button>
+
+            <div id="fg"></div>
+
+        </div>
+
+        <div class="card">
+
+            <h2>FortiGate Reconciliation</h2>
+
+            <button onclick="loadReconciliation()">
+                Run Reconciliation
+            </button>
+
+            <div id="reconSummary"
+                 class="dashgrid"></div>
+
+            <div id="reconciliation"></div>
+
+        </div>
+
+        <div class="card">
+
+            <h2>Interface / Policy Operations</h2>
+
+            <select id="opif"></select>
+
+            <input id="oppolicy"
+                   placeholder="Policy ID">
+
+            <button class="green"
+                    onclick="toggle(true,false)">
+                Dry Run Enable
+            </button>
+
+            <button class="red"
+                    onclick="toggle(false,false)">
+                Dry Run Disable
+            </button>
+
+            <pre id="opresult"></pre>
+
+        </div>
+
+    </div>
+
+    <!-- Utilities -->
+
+    <div id="utilitiesTab" style="display:none">
+
+        <div class="card">
+
+            <h2>Import Excel</h2>
+
+            <input type="file" id="file">
+
+            <button onclick="upload()">
+                Import
+            </button>
+
+            <span id="msg"></span>
+
+            <p class="hint">
+                Multi-VLAN source rows are imported with
+                VLAN blank and notes populated.
+            </p>
+
+        </div>
+
+        <div class="card">
+
+            <h2>Export</h2>
+
+            <button
+                onclick="window.location='/api/report.xlsx'">
+
+                Download Excel Report
+
+            </button>
+
+        </div>
+
+        <div class="card">
+
+            <h2>Object Pools</h2>
+
+            <button onclick="loadObjects()">
+                Refresh Pools
+            </button>
+
+            <div id="objects"></div>
+
+        </div>
+
+    </div>
+	
+	<script>
+	  let currentCustomers=[];
+	  async function j(url,opts){
+	    let r=await fetch(url,opts);
+		let t=await r.text();
+		try{return JSON.parse(t)}
+		catch(e)
+		{return {error:t}}
+	  }
+	  
+	  function esc(s){
+	    return String(s??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;')
+	  }
+	  
+	  function table(rows,actions=false){
+	    if(!rows||!rows.length)
+		return '<p>No data</p>';
+		let keys=Object.keys(rows[0]);
+		let h='<table><tr>'+keys.map(k=>'<th>'+esc(k)+'</th>').join('')+(actions?'<th>Operations</th>':'')+'</tr>';
+		for(let row of rows){
+		  h+='<tr class="'+(row.status==='deleted'?'deleted':'')+'">'+keys.map(k=>'<td>'+esc(row[k])+'</td>').join('');
+		  if(actions)h+=`<td><button onclick="editRow(${row.id})">Edit</button>
+		  <button class="red" onclick="delCustomer(${row.id})">Delete</button>
+		  </td>`;
+		  h+='</tr>'
+		}
+		return h+'</table>'
+	 }
+	 
+	 async function upload(){
+	   let f=file.files[0];
+	   let fd=new FormData();
+	   fd.append('file',f);
+	   msg.innerText=JSON.stringify(await j('/api/import/excel',{method:'POST',body:fd}));
+	   refreshAll()
+	 }
+	 
+	async function loadDashboard(){
+	   let d=await j('/api/dashboard');dashboard.innerHTML=
+	     `<div class="dashcard">
+		  <h3>Customers</h3>
+		  <div class="dashvalue">${d.customers.active}</div>
+		  <div class="dashdetail">Active | ${d.customers.deleted} deleted | ${d.customers.total} total</div></div>
+		  <div class="dashcard">
+		  <h3>Booths</h3>
+		  <div class="dashvalue">${d.booths.used} / ${d.booths.total}</div>
+		  <div class="dashdetail">Used | ${d.booths.available} available</div></div>
+		  <div class="dashcard">
+		    <h3>VLANs</h3>
+		    <div class="dashvalue">${d.vlans.used} / ${d.vlans.total}</div>
+		    <div class="dashdetail">Used | ${d.vlans.available} available</div>
+		  </div>
+		  <div class="dashcard">
+		   <h3>Subnets</h3>
+		   <div class="dashvalue">${d.subnets.used} / ${d.subnets.total}</div>
+		   <div class="dashdetail">Used | ${d.subnets.available} available</div>
+		  </div>
+		  <div class="dashcard">
+		    <h3>FortiGate Interfaces</h3>
+		    <div class="dashvalue">${d.fortigate_interfaces.assigned} / ${d.fortigate_interfaces.total_cached}</div>
+		    <div class="dashdetail">Assigned | ${d.fortigate_interfaces.unassigned} unassigned</div>
+		  </div>`
+	}
+	
+	async function loadDropdowns(){
+	  let d=await j('/api/dropdowns');
+	  booth.innerHTML='<option value="">-- booth --</option>'+d.booths.map(x=>`<option value="${esc(x.booth_group)}">${esc(x.booth_group)} (${x.status})</option>`).join('');vlan.innerHTML='<option value="">-- vlan --</option>'+d.vlans.map(x=>`<option value="${x.vlan_id}">${x.vlan_id} (${x.status})</option>`).join('');subnet.innerHTML='<option value="">-- subnet --</option>'+d.subnets.map(x=>`<option value="${x.cidr}">${x.cidr} gw ${x.gateway} (${x.status})</option>`).join('');fgif.innerHTML='<option value="">-- FortiGate interface --</option>'+d.fg_interfaces.map(x=>`<option value="${esc(x.name)}">${esc(x.name)}</option>`).join('');opif.innerHTML=fgif.innerHTML}
+
+    async function loadCustomers(){
+    currentCustomers=await j('/api/customers');
+    customers.innerHTML=table(currentCustomers,true)
+    }
+
+    function filterCustomers(){
+
+        const search =
+            customerSearch.value.toLowerCase().trim();
+
+        if(!search){
+            customers.innerHTML =
+                table(currentCustomers,true);
+            return;
+        }
+
+    const filtered =
+        currentCustomers.filter(x =>
+            JSON.stringify(x)
+                .toLowerCase()
+                .includes(search)
+        );
+
+    customers.innerHTML =
+        table(filtered,true);
+}
+ 
+ 
+ async function loadObjects(){let o=await j('/api/objects');objects.innerHTML='<h3>Booths</h3>'+table(o.booths)+'<h3>VLANs</h3>'+table(o.vlans)+'<h3>Subnets</h3>'+table(o.subnets)}async function refreshAll(){await loadDashboard();await loadDropdowns();await loadCustomers();await loadObjects()}function setSelect(sel,val){let s=String(val??'');sel.value=s;if(sel.value!==s&&s){let opt=document.createElement('option');opt.value=s;opt.textContent=s+' (current)';sel.appendChild(opt);sel.value=s}}function editRow(id){let r=currentCustomers.find(x=>x.id===id);if(!r)return;cid.value=r.id;licensee.value=r.licensee||'';legal.value=r.legal_name||'';setSelect(booth,r.booth_group);setSelect(vlan,r.vlan_id);setSelect(subnet,r.subnet_cidr);setSelect(fgif,r.fortigate_interface);notes.value=r.notes||'';window.scrollTo({top:0,behavior:'smooth'})}function clearForm(){cid.value='';licensee.value='';legal.value='';booth.value='';vlan.value='';subnet.value='';fgif.value='';notes.value=''}async function saveCustomer(){let payload={licensee:licensee.value,legal_name:legal.value,booth_group:booth.value||null,vlan_id:vlan.value?Number(vlan.value):null,subnet_cidr:subnet.value||null,fortigate_interface:fgif.value||null,notes:notes.value};let id=cid.value.trim();let url=id?'/api/customers/'+id:'/api/customers';let method=id?'PUT':'POST';alert(JSON.stringify(await j(url,{method,headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})));clearForm();refreshAll()}async function delCustomer(id){if(!confirm('Delete customer assignment '+id+'?'))return;alert(JSON.stringify(await j('/api/customers/'+id,{method:'DELETE'})));refreshAll()}async function fgRefresh(){fg.innerHTML='<p>Loading...</p>';fg.innerHTML='<pre>'+JSON.stringify(await j('/api/fortigate/refresh',{method:'POST'}),null,2)+'</pre>';refreshAll()}async function loadFg(){fg.innerHTML=table(await j('/api/fortigate/report'))}async function loadReconciliation(){let d=await j('/api/reconciliation');let s=d.summary||{};reconSummary.innerHTML=`<div class="dashcard"><h3>Matched</h3><div class="dashvalue">${s.match||0}</div></div><div class="dashcard"><h3>Review</h3><div class="dashvalue">${s.review||0}</div></div><div class="dashcard"><h3>Missing</h3><div class="dashvalue">${s.missing||0}</div></div><div class="dashcard"><h3>Unassigned FG</h3><div class="dashvalue">${s.unassigned||0}</div></div>`;reconciliation.innerHTML=table(d.results||[])}async function toggle(enable,apply){let payload={interface_name:opif.value,policy_id:oppolicy.value||null,enable,apply};opresult.textContent=JSON.stringify(await j('/api/fortigate/toggle',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),null,2)}
+ 
+ 
+ function showTab(tabName){
+
+    const tabs = [
+        'dashboardTab',
+        'customersTab',
+        'boothsTab',
+        'subnetsTab',
+        'fortigateTab',
+        'utilitiesTab'
+    ];
+
+    tabs.forEach(t=>{
+        const el=document.getElementById(t);
+
+        if(el){
+            el.style.display='none';
+        }
+    });
+
+    const active =
+        document.getElementById(tabName);
+
+    if(active){
+        active.style.display='block';
+    }
+
+    if(tabName==='boothsTab'){
+        loadBooths();
+    }
+
+    if(tabName==='subnetsTab'){
+        loadSubnets();
+    }
+}
+
+function filterCustomers(){
+
+    const search =
+      customerSearch.value.toLowerCase();
+
+    const filtered =
+      currentCustomers.filter(
+        x => JSON.stringify(x)
+             .toLowerCase()
+             .includes(search)
+      );
+
+    customers.innerHTML =
+      table(filtered,true);
+}
+
+async function loadBooths(){
+    let o = await j('/api/objects');
+    boothsView.innerHTML =
+        table(o.booths);
+}
+
+async function loadSubnets(){
+    let o = await j('/api/objects');
+    subnetsView.innerHTML =
+        table(o.subnets);
+}
+ refreshAll()
+
+    </script>
+	 </body>
+ </html>"""
+  
+
 @app.post('/api/import/excel')
 def upload_excel(file:UploadFile=File(...)):
     os.makedirs('data',exist_ok=True); dest=os.path.join('data',file.filename)
