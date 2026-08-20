@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.pyc
+
+data/*.xlsx
+data/*.bak
+
+.env
+
+.vscode/
+
+*.sqlite3-journal
