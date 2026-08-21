@@ -49,39 +49,6 @@ class TogglePayload(BaseModel):
     interface_name:str; policy_id:str|None=None; enable:bool; apply:bool=False
 
 
-# debug functions
-@app.get("/api/debug/policies")
-def debug_policies():
-    fg = FortiGateClient()
-    data = fg.get_policies()
-    return data.get("results", [])[:5]  
-
-@app.get("/api/debug/internet-policies")
-def debug_internet_policies():
-    fg = FortiGateClient()
-    policies = fg.get_policies()
-    results = []
-    for p in policies.get("results", []):
-        dst = [
-            x.get("name")
-            for x in p.get("dstintf", [])
-        ]
-        if "virtual-wan-link" not in dst:
-            continue
-        results.append({
-            "policyid": p.get("policyid"),
-            "name": p.get("name"),
-            "status": p.get("status"),
-            "srcintf": [
-                x.get("name")
-                for x in p.get("srcintf", [])
-            ]
-        })
-    return results[:50]
-    
-@app.get("/test", response_class=HTMLResponse)
-def test():
-    return render_home()[:500]
     
 @app.get('/',response_class=HTMLResponse)
 #@app.get("/")
