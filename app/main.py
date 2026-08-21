@@ -5,10 +5,12 @@ from pydantic import BaseModel
 from . import db
 from .pools import initialize_pools, refresh_statuses
 from .importer import import_excel
-from .fortigate import refresh_fortigate_cache, action_plan, apply_or_dry_run, FortiGateError
+from .fortigate import refresh_fortigate_cache, action_plan, FortiGateClient, apply_or_dry_run, FortiGateError
 from .reports import build_report
 app=FastAPI(title='CityPoint CMDB v3'); db.init_db(); initialize_pools(); refresh_statuses()
 
+
+fg = FortiGateClient()
 INFRA_VLANS = set(range(191, 200)) | {900}
 
 IGNORED_INTERFACES = {
@@ -45,6 +47,37 @@ class CustomerPayload(BaseModel):
     licensee:str; legal_name:str|None=None; booth_group:str|None=None; vlan_id:int|None=None; subnet_cidr:str|None=None; fortigate_interface:str|None=None; notes:str|None=None
 class TogglePayload(BaseModel):
     interface_name:str; policy_id:str|None=None; enable:bool; apply:bool=False
+
+
+# debug functions
+@app.get("/api/debug/policies")
+def debug_policies():
+    fg = FortiGateClient()
+    data = fg.get_policies()
+    return data.get("results", [])[:5]  
+
+@app.get("/api/debug/internet-policies")
+def debug_internet_policies():
+    fg = FortiGateClient()
+    policies = fg.get_policies()
+    results = []
+    for p in policies.get("results", []):
+        dst = [
+            x.get("name")
+            for x in p.get("dstintf", [])
+        ]
+        if "virtual-wan-link" not in dst:
+            continue
+        results.append({
+            "policyid": p.get("policyid"),
+            "name": p.get("name"),
+            "status": p.get("status"),
+            "srcintf": [
+                x.get("name")
+                for x in p.get("srcintf", [])
+            ]
+        })
+    return results[:50]
     
 @app.get("/test", response_class=HTMLResponse)
 def test():
@@ -704,7 +737,12 @@ def delete_customer(customer_id:int):
     db.execute("UPDATE customers SET status='deleted',updated_at=CURRENT_TIMESTAMP WHERE id=?",(customer_id,)); refresh_statuses(); db.audit('customer_delete',str(customer_id),None,'marked deleted'); return {'id':customer_id,'status':'marked deleted'}
 @app.post('/api/fortigate/refresh')
 def fg_refresh():
-    try: return refresh_fortigate_cache()
+    #try: return refresh_fortigate_cache()
+    try:
+        pepe = refresh_fortigate_cache()
+        interfaces = fg.get_interfaces()
+        policies = fg.get_policies()
+        return pepe
     except FortiGateError as e: raise HTTPException(status_code=400,detail=str(e))
     
     
@@ -756,6 +794,29 @@ def reconciliation():
             by_vlan_subnet[(str(vlan), cidr)] = fg
 
     assigned_names = set()
+    
+    fg = FortiGateClient()
+    policies = fg.get_policies().get("results", [])
+    policy_map = {}
+
+    for p in policies:
+        dst = [
+            x.get("name","").lower()
+            for x in p.get("dstintf", [])
+        ]
+        if "virtual-wan-link" not in dst:
+            continue
+
+        for src in p.get("srcintf", []):
+            iface = src.get("name")
+            if not iface:
+                continue
+            policy_map.setdefault(iface, []).append({
+                "policyid": p.get("policyid"),
+                "name": p.get("name"),
+                "status": p.get("status")
+            })
+        
     findings = []
 
     counts = {
@@ -777,6 +838,12 @@ def reconciliation():
 
         fg = None
         details = []
+        
+        internet_policies = policy_map.get(
+            interface_name,
+            []
+        )
+        
 
         #
         # Match by VLAN+CIDR
@@ -832,6 +899,32 @@ def reconciliation():
                 fg.get("name")
             )
 
+            internet_policies = policy_map.get(
+                interface_name,
+                []
+            )
+
+            #
+            # Internet Policy Validation
+            #
+            if not internet_policies:
+
+                status = "NO_INTERNET_POLICY"
+
+                details.append(
+                    "No SD-WAN Internet policy found"
+                )
+
+            elif any(
+                p.get("status") != "enable"
+                for p in internet_policies
+            ):
+
+                status = "DISABLED_INTERNET_POLICY"
+
+                details.append(
+                    "Internet policy disabled"
+                )
             #
             # VLAN validation
             #
@@ -883,10 +976,14 @@ def reconciliation():
                     f"Interface status is {fg.get('interface_status')}"
                 )
 
+
         if status == "MATCH":
             counts["match"] += 1
 
-        elif status == "NO_VLAN_SUBNET_MATCH":
+        elif status in (
+            "NO_VLAN_SUBNET_MATCH",
+            "NO_INTERNET_POLICY"
+        ):
             counts["missing"] += 1
 
         else:
@@ -906,7 +1003,19 @@ def reconciliation():
             "policy_name": fg.get("policy_name") if fg else None,
             "policy_status": fg.get("policy_status") if fg else None,
             "reconciliation_status": status,
-            "details": "; ".join(details)
+            "details": "; ".join(details),
+            "internet_policy_count":
+                len(internet_policies),
+            "internet_policy_ids":
+                ",".join(
+                    str(p.get("policyid"))
+                    for p in internet_policies
+                ),
+            "internet_policy_status":
+                ",".join(
+                    p.get("status")
+                    for p in internet_policies
+                ),
         })
 
     #
@@ -971,7 +1080,90 @@ def reconciliation():
 
 @app.get('/api/fortigate/report')
 def fg_report():
-    return db.rows("SELECT f.name AS interface_name,f.vlan_id AS fg_vlan,f.cidr AS fg_subnet,f.gateway AS fg_gateway,f.interface_status,f.policy_id,f.policy_name,f.policy_status,c.licensee AS current_customer,c.booth_group,c.vlan_id AS customer_vlan,c.subnet_cidr AS customer_subnet FROM fortigate_interfaces f LEFT JOIN customers c ON c.fortigate_interface=f.name AND c.status='active' ORDER BY f.name")
+    rows = db.rows(
+    """
+        SELECT
+            f.name AS interface_name,
+            f.vlan_id AS fg_vlan,
+            f.cidr AS fg_subnet,
+            f.gateway AS fg_gateway,
+            f.interface_status,
+            c.licensee AS current_customer,
+            c.booth_group,
+            c.vlan_id AS customer_vlan,
+            c.subnet_cidr AS customer_subnet
+        FROM fortigate_interfaces f
+        LEFT JOIN customers c
+            ON c.fortigate_interface = f.name
+        AND c.status='active'
+        ORDER BY f.name
+    """)
+
+    
+    fg = FortiGateClient()
+    policies = fg.get_policies().get("results", [])
+    
+    policy_map = {}
+    for p in policies:
+        dst = [
+            x.get("name","").lower()
+            for x in p.get("dstintf", [])
+        ]
+        if "virtual-wan-link" not in dst:
+            continue
+        for src in p.get("srcintf", []):
+            iface = src.get("name")
+            if not iface:
+                continue
+            policy_map.setdefault(
+                iface,
+                []
+            ).append({
+                "policyid": p.get("policyid"),
+                "name": p.get("name"),
+                "status": p.get("status")
+            })
+            
+        for r in rows:
+            iface = r.get("interface_name")
+            internet_policies = policy_map.get(
+                iface,
+                []
+            )
+            iface_status = (
+                r.get("interface_status") or ""
+            ).lower()
+
+            if not internet_policies:
+                if iface_status == "up":
+                    result = "NO INTERNET POLICY"
+                else:
+                    result = "INTERFACE DOWN"
+            elif any(
+                p["status"] != "enable"
+                for p in internet_policies
+            ):
+                if iface_status == "up":
+                        result = "POLICY DISABLED"
+                else:
+                        result = "INTERFACE DOWN"
+            else:
+                if iface_status == "up":
+                    result = "OK"
+                else:
+                    result = "INTERFACE DOWN"
+
+            r["internet_policy_ids"] = ",".join(
+                str(p["policyid"])
+                for p in internet_policies
+            )
+
+
+            r["internet_policy_result"] = result      
+ 
+    return rows
+  
+    
 @app.post('/api/fortigate/toggle')
 def fg_toggle(p:TogglePayload):
     plans=[action_plan('interface',p.interface_name,enable=p.enable)]
