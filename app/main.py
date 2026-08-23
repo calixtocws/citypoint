@@ -7,10 +7,30 @@ from .pools import initialize_pools, refresh_statuses
 from .importer import import_excel
 from .fortigate import refresh_fortigate_cache, action_plan, FortiGateClient, apply_or_dry_run, FortiGateError
 from .reports import build_report
+from .ruckus import collect_ruckus_cache
+from app.smartzone import collect_smartzone_cache
+
 app=FastAPI(title='CityPoint CMDB v3'); db.init_db(); initialize_pools(); refresh_statuses()
 
 
+
 fg = FortiGateClient()
+
+CACHE = {
+    "ruckus_switches": [],
+    "smartzone_dpsks": []
+}
+
+try:
+    CACHE["ruckus_switches"] = collect_ruckus_cache()
+except Exception as e:
+    print("Ruckus preload failed:", e)
+try:
+    CACHE["smartzone_dpsks"] = collect_smartzone_cache()
+except Exception as e:
+    print("SmartZone preload failed:", e)
+    
+    
 INFRA_VLANS = set(range(191, 200)) | {900}
 
 IGNORED_INTERFACES = {
@@ -56,8 +76,6 @@ def home():
     return render_home()
 
 def render_home():
-    #return r'''<!doctype html><html><head><meta charset="utf-8"><title>CityPoint CMDB v3</title><style>body{font-family:Segoe UI,Arial;margin:18px;background:#f5f6f8}.card{background:#fff;border:1px solid #ddd;border-radius:8px;padding:14px;margin:12px 0}button{background:#2563eb;color:#fff;border:0;padding:7px 10px;border-radius:5px;margin:3px}button.red{background:#b91c1c}button.green{background:#15803d}button.gray{background:#64748b}input,select{padding:6px;margin:3px;border:1px solid #bbb;border-radius:4px;min-width:150px}table{border-collapse:collapse;width:100%;font-size:12px;background:white}th{background:#1f4e78;color:white;position:sticky;top:0}td,th{border-bottom:1px solid #eee;padding:5px;text-align:left}tr.deleted{color:#888;background:#f1f5f9}pre{background:#0b1020;color:#75ff99;padding:10px;overflow:auto;max-height:300px}.hint{color:#475569}.dashgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(175px,1fr));gap:10px}.dashcard{border:1px solid #dbe3ee;border-radius:8px;padding:12px;background:#f8fbff}.dashcard h3{margin:0 0 8px;color:#1f4e78}.dashvalue{font-size:24px;font-weight:700}.dashdetail{font-size:12px;color:#475569;margin-top:4px}</style></head><body><h1>CityPoint CMDB v3.2</h1><div class="card"><h2>Dashboard</h2><div id="dashboard" class="dashgrid"><p>Loading...</p></div></div><div class="card"><h2>Import original Excel</h2><input type="file" id="file"><button onclick="upload()">Import</button><button onclick="refreshAll()">Refresh UI</button><button onclick="window.location='/api/report.xlsx'">Download Excel Report</button><span id="msg"></span><p class="hint">Multi-VLAN source rows are imported with VLAN blank and notes populated.</p></div><div class="card"><h2>Add / Edit Customer</h2><input id="cid" placeholder="ID for edit only"><input id="licensee" placeholder="Licensee"><input id="legal" placeholder="Legal Name"><select id="booth"></select><select id="vlan"></select><select id="subnet"></select><select id="fgif"></select><input id="notes" placeholder="Notes"><button onclick="saveCustomer()">Add / Save Edit</button><button class="gray" onclick="clearForm()">Clear Add Form</button></div><div class="card"><h2>Customer List</h2><div id="customers"></div></div><div class="card"><h2>Object Pools: available/used</h2><button onclick="loadObjects()">Refresh Pools</button><div id="objects"></div></div><div class="card"><h2>FortiGate</h2><button onclick="fgRefresh()">Pull FG Interfaces/Policies</button><button onclick="loadFg()">Show FG Interfaces vs Customer</button><div id="fg"></div></div><div class="card"><h2>FortiGate Reconciliation</h2><button onclick="loadReconciliation()">Run Reconciliation</button><div id="reconSummary" class="dashgrid"></div><div id="reconciliation"></div></div><div class="card"><h2>Interface / Policy Operations</h2><select id="opif"></select><input id="oppolicy" placeholder="Policy ID"><button class="green" onclick="toggle(true,false)">Dry Run Enable</button><button class="red" onclick="toggle(false,false)">Dry Run Disable</button><pre id="opresult"></pre></div><script>let currentCustomers=[];async function j(url,opts){let r=await fetch(url,opts);let t=await r.text();try{return JSON.parse(t)}catch(e){return {error:t}}}function esc(s){return String(s??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;')}function table(rows,actions=false){if(!rows||!rows.length)return '<p>No data</p>';let keys=Object.keys(rows[0]);let h='<table><tr>'+keys.map(k=>'<th>'+esc(k)+'</th>').join('')+(actions?'<th>Operations</th>':'')+'</tr>';for(let row of rows){h+='<tr class="'+(row.status==='deleted'?'deleted':'')+'">'+keys.map(k=>'<td>'+esc(row[k])+'</td>').join('');if(actions)h+=`<td><button onclick="editRow(${row.id})">Edit</button><button class="red" onclick="delCustomer(${row.id})">Delete</button></td>`;h+='</tr>'}return h+'</table>'}async function upload(){let f=file.files[0];let fd=new FormData();fd.append('file',f);msg.innerText=JSON.stringify(await j('/api/import/excel',{method:'POST',body:fd}));refreshAll()}async function loadDashboard(){let d=await j('/api/dashboard');dashboard.innerHTML=`<div class="dashcard"><h3>Customers</h3><div class="dashvalue">${d.customers.active}</div><div class="dashdetail">Active | ${d.customers.deleted} deleted | ${d.customers.total} total</div></div><div class="dashcard"><h3>Booths</h3><div class="dashvalue">${d.booths.used} / ${d.booths.total}</div><div class="dashdetail">Used | ${d.booths.available} available</div></div><div class="dashcard"><h3>VLANs</h3><div class="dashvalue">${d.vlans.used} / ${d.vlans.total}</div><div class="dashdetail">Used | ${d.vlans.available} available</div></div><div class="dashcard"><h3>Subnets</h3><div class="dashvalue">${d.subnets.used} / ${d.subnets.total}</div><div class="dashdetail">Used | ${d.subnets.available} available</div></div><div class="dashcard"><h3>FortiGate Interfaces</h3><div class="dashvalue">${d.fortigate_interfaces.assigned} / ${d.fortigate_interfaces.total_cached}</div><div class="dashdetail">Assigned | ${d.fortigate_interfaces.unassigned} unassigned</div></div>`}async function loadDropdowns(){let d=await j('/api/dropdowns');booth.innerHTML='<option value="">-- booth --</option>'+d.booths.map(x=>`<option value="${esc(x.booth_group)}">${esc(x.booth_group)} (${x.status})</option>`).join('');vlan.innerHTML='<option value="">-- vlan --</option>'+d.vlans.map(x=>`<option value="${x.vlan_id}">${x.vlan_id} (${x.status})</option>`).join('');subnet.innerHTML='<option value="">-- subnet --</option>'+d.subnets.map(x=>`<option value="${x.cidr}">${x.cidr} gw ${x.gateway} (${x.status})</option>`).join('');fgif.innerHTML='<option value="">-- FortiGate interface --</option>'+d.fg_interfaces.map(x=>`<option value="${esc(x.name)}">${esc(x.name)}</option>`).join('');opif.innerHTML=fgif.innerHTML}async function loadCustomers(){currentCustomers=await j('/api/customers');customers.innerHTML=table(currentCustomers,true)}async function loadObjects(){let o=await j('/api/objects');objects.innerHTML='<h3>Booths</h3>'+table(o.booths)+'<h3>VLANs</h3>'+table(o.vlans)+'<h3>Subnets</h3>'+table(o.subnets)}async function refreshAll(){await loadDashboard();await loadDropdowns();await loadCustomers();await loadObjects()}function setSelect(sel,val){let s=String(val??'');sel.value=s;if(sel.value!==s&&s){let opt=document.createElement('option');opt.value=s;opt.textContent=s+' (current)';sel.appendChild(opt);sel.value=s}}function editRow(id){let r=currentCustomers.find(x=>x.id===id);if(!r)return;cid.value=r.id;licensee.value=r.licensee||'';legal.value=r.legal_name||'';setSelect(booth,r.booth_group);setSelect(vlan,r.vlan_id);setSelect(subnet,r.subnet_cidr);setSelect(fgif,r.fortigate_interface);notes.value=r.notes||'';window.scrollTo({top:0,behavior:'smooth'})}function clearForm(){cid.value='';licensee.value='';legal.value='';booth.value='';vlan.value='';subnet.value='';fgif.value='';notes.value=''}async function saveCustomer(){let payload={licensee:licensee.value,legal_name:legal.value,booth_group:booth.value||null,vlan_id:vlan.value?Number(vlan.value):null,subnet_cidr:subnet.value||null,fortigate_interface:fgif.value||null,notes:notes.value};let id=cid.value.trim();let url=id?'/api/customers/'+id:'/api/customers';let method=id?'PUT':'POST';alert(JSON.stringify(await j(url,{method,headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})));clearForm();refreshAll()}async function delCustomer(id){if(!confirm('Delete customer assignment '+id+'?'))return;alert(JSON.stringify(await j('/api/customers/'+id,{method:'DELETE'})));refreshAll()}async function fgRefresh(){fg.innerHTML='<p>Loading...</p>';fg.innerHTML='<pre>'+JSON.stringify(await j('/api/fortigate/refresh',{method:'POST'}),null,2)+'</pre>';refreshAll()}async function loadFg(){fg.innerHTML=table(await j('/api/fortigate/report'))}async function loadReconciliation(){let d=await j('/api/reconciliation');let s=d.summary||{};reconSummary.innerHTML=`<div class="dashcard"><h3>Matched</h3><div class="dashvalue">${s.match||0}</div></div><div class="dashcard"><h3>Review</h3><div class="dashvalue">${s.review||0}</div></div><div class="dashcard"><h3>Missing</h3><div class="dashvalue">${s.missing||0}</div></div><div class="dashcard"><h3>Unassigned FG</h3><div class="dashvalue">${s.unassigned||0}</div></div>`;reconciliation.innerHTML=table(d.results||[])}async function toggle(enable,apply){let payload={interface_name:opif.value,policy_id:oppolicy.value||null,enable,apply};opresult.textContent=JSON.stringify(await j('/api/fortigate/toggle',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),null,2)}refreshAll()</script></body></html>'''
-    #   return f"""
     return """
 <!doctype html>
 <html>
@@ -189,280 +207,334 @@ pre{
 <h1>CityPoint CMDB v3.4</h1>
 
 <div class="card">
+    <button class="nav"
+            onclick="showTab('dashboardTab')">
+    Dashboard
+    </button>
 
-<button class="nav"
-        onclick="showTab('dashboardTab')">
-Dashboard
-</button>
-
-<button class="nav"
-        onclick="showTab('customersTab')">
-Customers
-</button>
-
-<button class="nav"
-        onclick="showTab('boothsTab')">
-Booths
-</button>
-
-<button class="nav"
-        onclick="showTab('subnetsTab')">
-Subnets
-</button>
-
-<button class="nav"
-        onclick="showTab('fortigateTab')">
-FortiGate
-</button>
-
-<button class="nav"
-        onclick="showTab('utilitiesTab')">
-Utilities
-</button>
-
+    <button class="nav"
+            onclick="showTab('customersTab')">
+    Customers
+    </button>
+    <button class="nav"
+            onclick="showTab('boothsTab')">
+    Booths
+    </button>
+    <button class="nav"
+            onclick="showTab('subnetsTab')">
+    Subnets
+    </button>
+    <button class="nav"
+            onclick="showTab('fortigateTab')">
+    FortiGate
+    </button>
+    <button class="nav"
+            onclick="showTab('switchesTab')">
+    Switches
+    </button>
+    <button class="nav"
+            onclick="showTab('dpskTab')">
+    DPSK
+    </button>
+    <button class="nav"
+            onclick="showTab('utilitiesTab')">
+    Utilities
+    </button>
 </div>
+
+
+
 
 <div id="dashboardTab">
-
     <div class="card">
         <h2>Dashboard</h2>
-
         <div id="dashboard"
              class="dashgrid">
-
             <p>Loading...</p>
-
         </div>
     </div>
-
 </div>
 
-<div id="customersTab"
-     style="display:none">
-
+<div id="customersTab" class="tab-content" style="display:none">
     <div class="card">
-
         <h2>Add / Edit Customer</h2>
-
             <input id="cid" placeholder="ID for edit only">
             <input id="licensee" placeholder="Licensee">
             <input id="legal" placeholder="Legal Name">
-
             <select id="booth"></select>
             <select id="vlan"></select>
             <select id="subnet"></select>
             <select id="fgif"></select>
-
             <input id="notes" placeholder="Notes">
-
             <button onclick="saveCustomer()">
                 Add / Save Edit
             </button>
-
             <button class="gray"
                     onclick="clearForm()">
                 Clear Add Form
             </button>
-
     </div>
 
     <div class="card">
-
         <h2>Customer List</h2>
-
         <input
             id="customerSearch"
             placeholder="Search customer / booth / vlan / subnet"
             onkeyup="filterCustomers()">
-
         <div id="customers"></div>
-
     </div>
+</div>
 
+<div id="dpskTab" class="tab">
+    <h2>DPSK Summary</h2>
+    <div id="dpskSummary"></div>
+    <hr>
+    <h2>DPSK Details</h2>
+    <div id="dpskDetails">
+        Select a VLAN
+    </div>
 </div>
 
 <div id="boothsTab"
      style="display:none">
-
     <div class="card">
-
         <h2>Booths</h2>
-
         <button onclick="loadBooths()">
             Refresh Booths
         </button>
-
         <div id="boothsView"></div>
-
     </div>
-
 </div>
 
-<div id="subnetsTab"
-     style="display:none">
-
+<div id="subnetsTab"class="tab-content" style="display:none" >
     <div class="card">
-
         <h2>Subnets</h2>
-
         <button onclick="loadSubnets()">
             Refresh Subnets
            </button>
-
             <div id="subnetsView"></div>
+    </div>
+</div>
 
-        </div>
-
+<!-- FortiGate -->
+<div id="fortigateTab" style="display:none">
+    <div class="card">
+        <h2>Collect From FortiGate</h2>
+        <button onclick="fgRefresh()">
+            Pull FG Interfaces / Policies
+        </button>
+        <button onclick="loadFg()">
+            Customer vs FG Interfaces
+        </button>
+        <div id="fg"></div>
+    </div>
+    <div class="card">
+        <h2>FortiGate Reconciliation</h2>
+        <button onclick="loadReconciliation()">
+            Run Reconciliation
+        </button>
+        <div id="reconSummary"
+                class="dashgrid"></div>
+        <div id="reconciliation"></div>
     </div>
 
-    <!-- FortiGate -->
+    <div class="card">
+        <h2>Interface / Policy Operations</h2>
+        <select id="opif"></select>
+        <input id="oppolicy"
+                placeholder="Policy ID">
+        <button class="green"
+                onclick="toggle(true,false)">
+            Dry Run Enable
+        </button>
+        <button class="red"
+                onclick="toggle(false,false)">
+            Dry Run Disable
+        </button>
+        <pre id="opresult"></pre>
+    </div>
+</div>
 
-    <div id="fortigateTab" style="display:none">
+<div id="switchesTab" class="tab-content" style="display:none;">
+  <h2>Switch Inventory</h2>
+  <table class="grid">
+    <thead>
+      <tr>
+        <th>Switch</th>
+        <th>Port</th>
+        <th>Description</th>
+        <th>VLAN</th>
+        <th>Link</th>
+        <th>Speed</th>
+      </tr>
+    </thead>
+    <tbody id="switchesBody"></tbody>
+  </table>
+</div>
 
-        <div class="card">
-
-            <h2>Collect From FortiGate</h2>
-
-            <button onclick="fgRefresh()">
-                Pull FG Interfaces / Policies
-            </button>
-
-            <button onclick="loadFg()">
-                Customer vs FG Interfaces
-            </button>
-
-            <div id="fg"></div>
-
-        </div>
-
-        <div class="card">
-
-            <h2>FortiGate Reconciliation</h2>
-
-            <button onclick="loadReconciliation()">
-                Run Reconciliation
-            </button>
-
-            <div id="reconSummary"
-                 class="dashgrid"></div>
-
-            <div id="reconciliation"></div>
-
-        </div>
-
-        <div class="card">
-
-            <h2>Interface / Policy Operations</h2>
-
-            <select id="opif"></select>
-
-            <input id="oppolicy"
-                   placeholder="Policy ID">
-
-            <button class="green"
-                    onclick="toggle(true,false)">
-                Dry Run Enable
-            </button>
-
-            <button class="red"
-                    onclick="toggle(false,false)">
-                Dry Run Disable
-            </button>
-
-            <pre id="opresult"></pre>
-
-        </div>
-
+<!-- Utilities -->
+<div id="utilitiesTab" class="tab-content" style="display:none">
+    <div class="card">
+        <h2>Import Excel</h2>
+        <input type="file" id="file">
+        <button onclick="upload()">
+            Import
+        </button>
+        <span id="msg"></span>
+        <p class="hint">
+            Multi-VLAN source rows are imported with
+            VLAN blank and notes populated.
+        </p>
+    </div>
+    <div class="card">
+        <h2>Export</h2>
+        <button
+            onclick="window.location='/api/report.xlsx'">
+            Download Excel Report
+        </button>
     </div>
 
-    <!-- Utilities -->
-
-    <div id="utilitiesTab" style="display:none">
-
-        <div class="card">
-
-            <h2>Import Excel</h2>
-
-            <input type="file" id="file">
-
-            <button onclick="upload()">
-                Import
-            </button>
-
-            <span id="msg"></span>
-
-            <p class="hint">
-                Multi-VLAN source rows are imported with
-                VLAN blank and notes populated.
-            </p>
-
-        </div>
-
-        <div class="card">
-
-            <h2>Export</h2>
-
-            <button
-                onclick="window.location='/api/report.xlsx'">
-
-                Download Excel Report
-
-            </button>
-
-        </div>
-
-        <div class="card">
-
-            <h2>Object Pools</h2>
-
-            <button onclick="loadObjects()">
-                Refresh Pools
-            </button>
-
-            <div id="objects"></div>
-
-        </div>
-
+    <div class="card">
+        <h2>Object Pools</h2>
+        <button onclick="loadObjects()">
+            Refresh Pools
+        </button>
+        <div id="objects"></div>
     </div>
+</div>
 	
-	<script>
-	  let currentCustomers=[];
-	  async function j(url,opts){
-	    let r=await fetch(url,opts);
-		let t=await r.text();
-		try{return JSON.parse(t)}
-		catch(e)
-		{return {error:t}}
-	  }
-	  
-	  function esc(s){
-	    return String(s??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;')
-	  }
-	  
-	  function table(rows,actions=false){
-	    if(!rows||!rows.length)
-		return '<p>No data</p>';
-		let keys=Object.keys(rows[0]);
-		let h='<table><tr>'+keys.map(k=>'<th>'+esc(k)+'</th>').join('')+(actions?'<th>Operations</th>':'')+'</tr>';
-		for(let row of rows){
-		  h+='<tr class="'+(row.status==='deleted'?'deleted':'')+'">'+keys.map(k=>'<td>'+esc(row[k])+'</td>').join('');
-		  if(actions)h+=`<td><button onclick="editRow(${row.id})">Edit</button>
-		  <button class="red" onclick="delCustomer(${row.id})">Delete</button>
-		  </td>`;
-		  h+='</tr>'
-		}
-		return h+'</table>'
-	 }
+<script>
+    let currentCustomers=[];
+    async function j(url,opts){
+    let r=await fetch(url,opts);
+    let t=await r.text();
+    try{return JSON.parse(t)}
+    catch(e)
+    {return {error:t}}
+    }
+    
+    function esc(s){
+        return String(s??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;')
+    }
+    
+    function table(rows,actions=false){
+        if(!rows||!rows.length)
+        return '<p>No data</p>';
+        let keys=Object.keys(rows[0]);
+        let h='<table><tr>'+keys.map(k=>'<th>'+esc(k)+'</th>').join('')+(actions?'<th>Operations</th>':'')+'</tr>';
+        for(let row of rows){
+            h+='<tr class="'+(row.status==='deleted'?'deleted':'')+'">'+keys.map(k=>'<td>'+esc(row[k])+'</td>').join('');
+            if(actions)h+=`<td><button onclick="editRow(${row.id})">Edit</button>
+            <button class="red" onclick="delCustomer(${row.id})">Delete</button>
+            </td>`;
+            h+='</tr>'
+         }
+        return h+'</table>'
+	}
 	 
-	 async function upload(){
-	   let f=file.files[0];
-	   let fd=new FormData();
-	   fd.append('file',f);
-	   msg.innerText=JSON.stringify(await j('/api/import/excel',{method:'POST',body:fd}));
-	   refreshAll()
-	 }
-	 
-	async function loadDashboard(){
+    async function upload(){
+        let f=file.files[0];
+        let fd=new FormData();
+        fd.append('file',f);
+        msg.innerText=JSON.stringify(await j('/api/import/excel',{method:'POST',body:fd}));
+        refreshAll()
+    }
+
+   
+async function loadSwitches() {
+
+    const body =
+        document.getElementById(
+            "switchesBody"
+        );
+
+    const response =
+        await fetch('/api/switches');
+
+    const data =
+        await response.json();
+
+    body.innerHTML = '';
+
+    data.forEach(sw => {
+
+        body.innerHTML += `
+        <tr>
+            <td>${sw.switch}</td>
+            <td>${sw.port}</td>
+            <td>${sw.description || ''}</td>
+            <td>${sw.vlan || ''}</td>
+            <td>${sw.link || ''}</td>
+            <td>${sw.speed || ''}</td>
+        </tr>
+        `;
+    });
+}
+
+
+async function loadDpskSummary() {
+
+    const r = await fetch("/api/dpsks-summary");
+    const data = await r.json();
+    data.sort((a,b) => a.vlan - b.vlan);
+    let html = `
+    <div class="card">
+        <div class="dashvalue">
+            ${data.length}
+        </div>
+        <div class="dashdetail">
+            DPSK VLANs
+        </div>
+    </div>
+    <table class="table">
+        <thead>
+            <tr>
+                <th>VLAN</th>
+                <th>DPSKs</th>
+                <th>Example Username</th>
+                <th>Latest Created</th>
+                <th>Action</th>
+            </tr>
+        </thead>
+        <tbody>
+    `;
+    data.forEach(row => {
+        html += `
+        <tr>
+            <td>
+                ${row.vlan}
+            </td>
+            <td>
+                ${row.dpsk_count}
+            </td>
+            <td>
+                ${row.sample_username || ""}
+            </td>
+            <td>
+                ${row.latest_created || ""}
+            </td>
+            <td>
+                <button
+                    onclick="loadDpskVlan(${row.vlan})">
+                    View
+                </button>
+            </td>
+        </tr>
+        `;
+    });
+    html += `
+        </tbody>
+    </table>
+    `;
+    document.getElementById(
+        "dpskSummary"
+    ).innerHTML = html;
+}
+
+
+
+
+async function loadDashboard(){
 	   let d=await j('/api/dashboard');dashboard.innerHTML=
 	     `<div class="dashcard">
 		  <h3>Customers</h3>
@@ -486,10 +558,119 @@ Utilities
 		    <h3>FortiGate Interfaces</h3>
 		    <div class="dashvalue">${d.fortigate_interfaces.assigned} / ${d.fortigate_interfaces.total_cached}</div>
 		    <div class="dashdetail">Assigned | ${d.fortigate_interfaces.unassigned} unassigned</div>
-		  </div>`
-	}
+		  </div>
+    `
+        + `<div class="dashcard"
+     style="border-left:5px solid ${
+        d.physical.down > 0 ? '#dc2626' : '#16a34a'
+     }">
+            <h3>DPSK Coverage</h3>
+            <div class="dashvalue">${d.dpsk.linked}</div>
+            <div class="dashdetail">
+                Linked | ${d.dpsk.missing} missing
+            </div>
+        </div>`
+
+        + `<div class="dashcard"
+     style="border-left:5px solid ${
+        d.physical.down > 0 ? '#dc2626' : '#16a34a'
+     }">
+            <h3>Physical Links</h3>
+            <div class="dashvalue">${d.physical.up}</div>
+            <div class="dashdetail">
+                Up | ${d.physical.down} down |
+                ${d.physical.nomatch} no match
+            </div>
+        </div>`
+    
+}
+
+async function loadDpskVlan(vlan) {
+
+    console.log("Loading VLAN", vlan);
+
+    const r = await fetch(`/api/dpsks/${vlan}`);
+
+    console.log("HTTP", r.status);
+
+    const data = await r.json();
+
+    console.log("Records", data.length);
+
+    let html = `
+        <h3>
+            VLAN ${vlan}
+            (${data.length} DPSKs)
+        </h3>
+
+        <div style="margin-bottom:10px">
+
+            <button disabled>
+                Create DPSK
+            </button>
+
+            <button disabled>
+                Delete Selected
+            </button>
+
+        </div>
+
+        <table class="table">
+
+            <thead>
+                <tr>
+                    <th></th>
+                    <th>Username</th>
+                    <th>Passphrase</th>
+                    <th>Created</th>
+                    <th>Expires</th>
+                </tr>
+            </thead>
+
+            <tbody>
+    `;
+
+    data.forEach(row => {
+
+        html += `
+            <tr>
+
+                <td>
+                    <input
+                        type="checkbox"
+                        value="${row.id}">
+                </td>
+
+                <td>${row.username}</td>
+
+                <td>${row.passphrase}</td>
+
+                <td>${row.created}</td>
+
+                <td>${row.expires}</td>
+
+            </tr>
+        `;
+    });
+
+    html += `
+            </tbody>
+        </table>
+    `;
+
+    const details =
+        document.getElementById("dpskDetails");
+
+    details.innerHTML = html;
+
+    details.scrollIntoView({
+        behavior: "smooth",
+        block: "start"
+    });
+}
+
 	
-	async function loadDropdowns(){
+async function loadDropdowns(){
 	  let d=await j('/api/dropdowns');
 	  booth.innerHTML='<option value="">-- booth --</option>'+d.booths.map(x=>`<option value="${esc(x.booth_group)}">${esc(x.booth_group)} (${x.status})</option>`).join('');vlan.innerHTML='<option value="">-- vlan --</option>'+d.vlans.map(x=>`<option value="${x.vlan_id}">${x.vlan_id} (${x.status})</option>`).join('');subnet.innerHTML='<option value="">-- subnet --</option>'+d.subnets.map(x=>`<option value="${x.cidr}">${x.cidr} gw ${x.gateway} (${x.status})</option>`).join('');fgif.innerHTML='<option value="">-- FortiGate interface --</option>'+d.fg_interfaces.map(x=>`<option value="${esc(x.name)}">${esc(x.name)}</option>`).join('');opif.innerHTML=fgif.innerHTML}
 
@@ -521,10 +702,80 @@ Utilities
 }
  
  
- async function loadObjects(){let o=await j('/api/objects');objects.innerHTML='<h3>Booths</h3>'+table(o.booths)+'<h3>VLANs</h3>'+table(o.vlans)+'<h3>Subnets</h3>'+table(o.subnets)}async function refreshAll(){await loadDashboard();await loadDropdowns();await loadCustomers();await loadObjects()}function setSelect(sel,val){let s=String(val??'');sel.value=s;if(sel.value!==s&&s){let opt=document.createElement('option');opt.value=s;opt.textContent=s+' (current)';sel.appendChild(opt);sel.value=s}}function editRow(id){let r=currentCustomers.find(x=>x.id===id);if(!r)return;cid.value=r.id;licensee.value=r.licensee||'';legal.value=r.legal_name||'';setSelect(booth,r.booth_group);setSelect(vlan,r.vlan_id);setSelect(subnet,r.subnet_cidr);setSelect(fgif,r.fortigate_interface);notes.value=r.notes||'';window.scrollTo({top:0,behavior:'smooth'})}function clearForm(){cid.value='';licensee.value='';legal.value='';booth.value='';vlan.value='';subnet.value='';fgif.value='';notes.value=''}async function saveCustomer(){let payload={licensee:licensee.value,legal_name:legal.value,booth_group:booth.value||null,vlan_id:vlan.value?Number(vlan.value):null,subnet_cidr:subnet.value||null,fortigate_interface:fgif.value||null,notes:notes.value};let id=cid.value.trim();let url=id?'/api/customers/'+id:'/api/customers';let method=id?'PUT':'POST';alert(JSON.stringify(await j(url,{method,headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})));clearForm();refreshAll()}async function delCustomer(id){if(!confirm('Delete customer assignment '+id+'?'))return;alert(JSON.stringify(await j('/api/customers/'+id,{method:'DELETE'})));refreshAll()}async function fgRefresh(){fg.innerHTML='<p>Loading...</p>';fg.innerHTML='<pre>'+JSON.stringify(await j('/api/fortigate/refresh',{method:'POST'}),null,2)+'</pre>';refreshAll()}async function loadFg(){fg.innerHTML=table(await j('/api/fortigate/report'))}async function loadReconciliation(){let d=await j('/api/reconciliation');let s=d.summary||{};reconSummary.innerHTML=`<div class="dashcard"><h3>Matched</h3><div class="dashvalue">${s.match||0}</div></div><div class="dashcard"><h3>Review</h3><div class="dashvalue">${s.review||0}</div></div><div class="dashcard"><h3>Missing</h3><div class="dashvalue">${s.missing||0}</div></div><div class="dashcard"><h3>Unassigned FG</h3><div class="dashvalue">${s.unassigned||0}</div></div>`;reconciliation.innerHTML=table(d.results||[])}async function toggle(enable,apply){let payload={interface_name:opif.value,policy_id:oppolicy.value||null,enable,apply};opresult.textContent=JSON.stringify(await j('/api/fortigate/toggle',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),null,2)}
+async function loadObjects(){
+     let o=await j('/api/objects');
+     objects.innerHTML='<h3>Booths</h3>'+table(o.booths)+'<h3>VLANs</h3>'+table(o.vlans)+'<h3>Subnets</h3>'+table(o.subnets)
+}
+     
+async function refreshAll(){
+    await loadDashboard();
+    await loadDropdowns();
+    await loadCustomers();
+    await loadObjects()
+    }
+
+function setSelect(sel,val){
+    let s=String(val??'');
+    sel.value=s;
+    if(sel.value!==s&&s){let opt=document.createElement('option');opt.value=s;opt.textContent=s+' (current)';sel.appendChild(opt);sel.value=s}
+    }
+
+function editRow(id){
+    let r=currentCustomers.find(x=>x.id===id);
+    if(!r)return;cid.value=r.id;licensee.value=r.licensee||'';
+    legal.value=r.legal_name||'';
+    setSelect(booth,r.booth_group);
+    setSelect(vlan,r.vlan_id);
+    setSelect(subnet,r.subnet_cidr);
+    setSelect(fgif,r.fortigate_interface);notes.value=r.notes||'';
+    window.scrollTo({top:0,behavior:'smooth'})
+    }
+    
+function clearForm(){
+    cid.value='';
+    licensee.value='';
+    legal.value='';
+    booth.value='';
+    vlan.value='';
+    subnet.value='';
+    fgif.value='';
+    notes.value=''
+    }
+    
+async function saveCustomer(){
+    let payload={licensee:licensee.value,legal_name:legal.value,booth_group:booth.value||null,vlan_id:vlan.value?Number(vlan.value):null,subnet_cidr:subnet.value||null,fortigate_interface:fgif.value||null,notes:notes.value};let id=cid.value.trim();
+    let url=id?'/api/customers/'+id:'/api/customers';
+    let method=id?'PUT':'POST';alert(JSON.stringify(await j(url,{method,headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})));
+    clearForm();
+    refreshAll()
+    }
+    
+async function delCustomer(id){
+    if(!confirm('Delete customer assignment '+id+'?'))return;
+    alert(JSON.stringify(await j('/api/customers/'+id,{method:'DELETE'})));
+    refreshAll()
+    }
+    
+async function fgRefresh(){
+    fg.innerHTML='<p>Loading...</p>';
+    fg.innerHTML='<pre>'+JSON.stringify(await j('/api/fortigate/refresh',{method:'POST'}),null,2)+'</pre>';
+    refreshAll()
+    }
+    
+async function loadFg(){
+    fg.innerHTML=table(await j('/api/fortigate/report'))
+    }
+    
+async function loadReconciliation(){
+    let d=await j('/api/reconciliation');
+    let s=d.summary||{};
+    reconSummary.innerHTML=`<div class="dashcard"><h3>Matched</h3><div class="dashvalue">${s.match||0}</div></div><div class="dashcard"><h3>Review</h3><div class="dashvalue">${s.review||0}</div></div><div class="dashcard"><h3>Missing</h3><div class="dashvalue">${s.missing||0}</div></div><div class="dashcard"><h3>Unassigned FG</h3><div class="dashvalue">${s.unassigned||0}</div></div>`;
+    reconciliation.innerHTML=table(d.results||[])}async function toggle(enable,apply){let payload={interface_name:opif.value,policy_id:oppolicy.value||null,enable,apply};
+    opresult.textContent=JSON.stringify(await j('/api/fortigate/toggle',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),null,2)
+    }
  
  
- function showTab(tabName){
+function showTab(tabName){
 
     const tabs = [
         'dashboardTab',
@@ -532,30 +783,33 @@ Utilities
         'boothsTab',
         'subnetsTab',
         'fortigateTab',
+        'switchesTab',
+        'dpskTab',
         'utilitiesTab'
     ];
 
     tabs.forEach(t=>{
         const el=document.getElementById(t);
-
         if(el){
             el.style.display='none';
         }
     });
-
     const active =
         document.getElementById(tabName);
-
     if(active){
         active.style.display='block';
     }
-
     if(tabName==='boothsTab'){
         loadBooths();
     }
-
     if(tabName==='subnetsTab'){
         loadSubnets();
+    }
+    if(tabName==='switchesTab'){
+        loadSwitches();
+    }
+    if(tabName==='dpskTab'){
+        loadDpskSummary();
     }
 }
 
@@ -593,11 +847,23 @@ async function loadSubnets(){
  </html>"""
   
 
+@app.get("/api/ruckus/refresh")
+def ruckus_refresh():
+
+    data = collect_ruckus_cache()
+    CACHE["ruckus_switches"] = data
+
+    return {
+        "status": "success",
+        "records": len(data)
+    }
+
 @app.post('/api/import/excel')
 def upload_excel(file:UploadFile=File(...)):
     os.makedirs('data',exist_ok=True); dest=os.path.join('data',file.filename)
     with open(dest,'wb') as f: shutil.copyfileobj(file.file,f)
     return import_excel(dest)
+
 @app.get('/api/dashboard')
 def dashboard():
     refresh_statuses()
@@ -611,6 +877,28 @@ def dashboard():
     subnet_map = {r["status"]: r["total"] for r in subnets}
     assigned_interfaces = db.rows("SELECT COUNT(DISTINCT fortigate_interface) AS total FROM customers WHERE status='active' AND fortigate_interface IS NOT NULL AND TRIM(fortigate_interface)<>''")[0]["total"]
     fg_total = db.rows("SELECT COUNT(*) AS total FROM fortigate_interfaces")[0]["total"]
+    customers_full = customers()
+    dpsk_linked = sum(
+        1 for c in customers_full
+        if c.get("dpsk_count", 0) > 0
+    )
+    dpsk_missing = sum(
+        1 for c in customers_full
+        if c.get("dpsk_count", 0) == 0
+    )
+    physical_up = sum(
+        1 for c in customers_full
+        if c.get("physical_status") == "Up"
+    )
+    physical_down = sum(
+        1 for c in customers_full
+        if c.get("physical_status") == "Down"
+    )
+    physical_nomatch = sum(
+        1 for c in customers_full
+        if c.get("physical_status") == "No Match"
+    )
+    
     return {
         "customers": {
             "active": customer_map.get("active", 0),
@@ -637,6 +925,15 @@ def dashboard():
             "unassigned": max(fg_total - assigned_interfaces, 0),
             "total_cached": fg_total,
         },
+        "dpsk": {
+            "linked": dpsk_linked,
+            "missing": dpsk_missing
+        },
+        "physical": {
+            "up": physical_up,
+            "down": physical_down,
+            "nomatch": physical_nomatch
+        },
     }
 
 @app.get("/api/debug/customer/{cid}")
@@ -660,9 +957,213 @@ def dropdowns():
 @app.get('/api/objects')
 def objects():
     refresh_statuses(); return {'booths':db.rows("SELECT b.booth_group,b.status,GROUP_CONCAT(c.licensee, ', ') AS used_by FROM booths b LEFT JOIN customers c ON c.booth_group=b.booth_group AND c.status='active' GROUP BY b.booth_group,b.status ORDER BY b.booth_group"),'vlans':db.rows("SELECT v.vlan_id,v.status,GROUP_CONCAT(c.licensee, ', ') AS used_by FROM vlans v LEFT JOIN customers c ON c.vlan_id=v.vlan_id AND c.status='active' GROUP BY v.vlan_id,v.status ORDER BY v.vlan_id"),'subnets':db.rows("SELECT s.cidr,s.gateway,s.mask,s.status,GROUP_CONCAT(c.licensee, ', ') AS used_by FROM subnets s LEFT JOIN customers c ON c.subnet_cidr=s.cidr AND c.status='active' GROUP BY s.cidr,s.gateway,s.mask,s.status ORDER BY s.cidr")}
+
+
+@app.get("/api/dpsks/refresh")
+def dpsk_refresh():
+    data = collect_smartzone_cache()
+    CACHE["smartzone_dpsks"] = data
+    return {
+        "records": len(data)
+    }
+    
+@app.get("/api/dpsks/{vlan}")
+def api_dpsk_vlan(vlan: int):
+    dpsks = collect_smartzone_cache()
+    return [
+        d
+        for d in dpsks
+        if int(d["vlan"]) == vlan
+    ]
+
+
+@app.get("/api/dpsks-summary")
+def api_dpsks_summary():
+    dpsks = collect_smartzone_cache()
+    vlan_map = {}
+    for row in dpsks:
+        vlan = row["vlan"]
+        if vlan not in vlan_map:
+            vlan_map[vlan] = []
+        vlan_map[vlan].append(row)
+    results = []
+    for vlan, entries in vlan_map.items():
+        results.append({
+            "vlan": vlan,
+            "dpsk_count": len(entries),
+            # useful later
+            "sample_username":
+                entries[0]["username"],
+            "latest_created":
+                max(
+                    x["created"]
+                    for x in entries
+                )
+        })
+
+    return sorted(
+        results,
+        key=lambda x: x["vlan"]
+    )
+        
 @app.get('/api/customers')
 def customers():
-    refresh_statuses(); return db.rows("SELECT id,licensee,legal_name,booth_group,vlan_id,subnet_cidr,fortigate_interface,status,notes FROM customers ORDER BY CASE WHEN status='active' THEN 0 ELSE 1 END, licensee")
+
+    refresh_statuses()
+
+    rows = db.rows(
+        """
+        SELECT
+            id,
+            licensee,
+            legal_name,
+            booth_group,
+            vlan_id,
+            subnet_cidr,
+            fortigate_interface,
+            status,
+            notes
+        FROM customers
+        ORDER BY
+            CASE WHEN status='active' THEN 0 ELSE 1 END,
+            licensee
+        """
+    )
+
+    import time
+    #
+    # Build Ruckus lookup
+    #
+  
+    #ruckus_data = collect_ruckus_cache()
+    ruckus_data = CACHE.get("ruckus_switches", [])
+
+
+    ruckus_map = {}
+
+    for r in ruckus_data:
+
+        desc = (r.get("description") or "").strip()
+
+        if desc.startswith("DMH-Booth-"):
+
+            booth = desc.replace(
+                "DMH-Booth-",
+                ""
+            )
+
+            ruckus_map[booth] = r
+
+    #
+    # Attach switch info
+    #
+    for row in rows:
+
+        booth_group = row.get("booth_group") or ""
+
+        booths = [
+            b.strip()
+            for b in booth_group.split(",")
+            if b.strip()
+        ]
+
+        ruckus = None
+        matched_booth = ""
+
+        for booth in booths:
+            if booth in ruckus_map:
+                matched_booth = booth
+                ruckus = ruckus_map[booth]
+                break
+
+        if ruckus:
+            row["ruckus_switch"] = ruckus.get("switch")
+            row["ruckus_port"] = ruckus.get("port")
+            row["ruckus_vlan"] = ruckus.get("vlan")
+            row["ruckus_link"] = ruckus.get("link")
+            row["ruckus_speed"] = ruckus.get("speed")
+            
+            row["matched_booth"] = matched_booth
+            row["switch_description"] = ruckus.get(
+            "description"
+            )
+            
+            
+            
+
+            if ruckus.get("link") == "Up":
+                row["physical_status"] = "Up"
+            else:
+                row["physical_status"] = "Down"
+
+        else:
+
+            row["ruckus_switch"] = ""
+            row["ruckus_port"] = ""
+            row["ruckus_vlan"] = ""
+            row["ruckus_link"] = ""
+            row["ruckus_speed"] = ""
+
+            row["physical_status"] = "No Match"
+            row["matched_booth"] = ""
+            row["switch_description"] = "" 
+    
+    
+        #
+    # Build DPSK lookup by VLAN
+    #
+
+    dpsk_data = collect_smartzone_cache()
+    dpsk_data = CACHE.get( "smartzone_dpsks",  [])
+
+    dpsk_count_by_vlan = {}
+
+    for dpsk in dpsk_data:
+        try:
+            dpsk_vlan = int(dpsk.get("vlan"))
+        except (TypeError, ValueError):
+            continue
+
+        dpsk_count_by_vlan[dpsk_vlan] = (
+            dpsk_count_by_vlan.get(dpsk_vlan, 0) + 1
+        )
+
+    #
+    # Attach DPSK status to every customer
+    #
+    for row in rows:
+        customer_vlan = row.get("vlan_id")
+
+        try:
+            customer_vlan = int(customer_vlan)
+        except (TypeError, ValueError):
+            customer_vlan = None
+
+        dpsk_count = (
+            dpsk_count_by_vlan.get(customer_vlan, 0)
+            if customer_vlan is not None
+            else 0
+        )
+
+        row["dpsk_count"] = dpsk_count
+        row["dpsk_linked"] = "Yes" if dpsk_count else "No"
+    
+  
+    for row in rows[:20]:
+
+        booth_group = row.get("booth_group") or ""
+        booths = [
+            b.strip()
+            for b in booth_group.split(",")
+            if b.strip()
+        ]
+        matched = None
+        for booth in booths:
+            if booth in ruckus_map:
+                matched = booth
+                break
+    return rows
+
 def validate_unique_assignment(p: CustomerPayload, exclude_customer_id: int | None = None):
     """Hard-stop duplicate active booth, VLAN, or subnet assignments."""
     checks = [
@@ -1140,3 +1641,11 @@ def fg_toggle(p:TogglePayload):
 @app.get('/api/report.xlsx')
 def report_xlsx():
     return StreamingResponse(build_report(),media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',headers={'Content-Disposition':'attachment; filename=citypoint_cmdb_report.xlsx'})
+
+@app.get("/api/switches")
+def api_switches():
+    return CACHE.get(
+    "ruckus_switches",
+    []
+    )
+
