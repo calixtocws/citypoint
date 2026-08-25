@@ -428,7 +428,58 @@ pre{
         let keys=Object.keys(rows[0]);
         let h='<table><tr>'+keys.map(k=>'<th>'+esc(k)+'</th>').join('')+(actions?'<th>Operations</th>':'')+'</tr>';
         for(let row of rows){
-            h+='<tr class="'+(row.status==='deleted'?'deleted':'')+'">'+keys.map(k=>'<td>'+esc(row[k])+'</td>').join('');
+            
+            h += '<tr class="' +
+                (row.status === 'deleted' ? 'deleted' : '')
+                + '">';
+
+            for (let k of keys) {
+
+                let value = row[k];
+
+                if (k === 'dpsk_linked') {
+
+                    let color =
+                        value === 'Yes'
+                            ? '#16a34a'
+                            : '#dc2626';
+
+                    h += `
+                        <td>
+                            <span style="
+                                color:${color};
+                                font-weight:bold">
+                                ${esc(value)}
+                            </span>
+                        </td>
+                    `;
+
+                } else if (k === 'physical_status') {
+
+                    let color = '#ea580c';
+
+                    if (value === 'Up')
+                        color = '#16a34a';
+
+                    if (value === 'Down')
+                        color = '#dc2626';
+
+                    h += `
+                        <td>
+                            <span style="
+                                color:${color};
+                                font-weight:bold">
+                                ${esc(value)}
+                            </span>
+                        </td>
+                    `;
+
+                } else {
+
+                    h += `<td>${esc(value)}</td>`;
+                }
+            }
+                
             if(actions)h+=`<td><button onclick="editRow(${row.id})">Edit</button>
             <button class="red" onclick="delCustomer(${row.id})">Delete</button>
             </td>`;
@@ -1015,7 +1066,6 @@ def api_dpsks_summary():
 def customers():
 
     refresh_statuses()
-
     rows = db.rows(
         """
         SELECT
@@ -1039,101 +1089,73 @@ def customers():
     #
     # Build Ruckus lookup
     #
-  
-    #ruckus_data = collect_ruckus_cache()
+     #ruckus_data = collect_ruckus_cache()
     ruckus_data = CACHE.get("ruckus_switches", [])
 
-
     ruckus_map = {}
-    
-    
-    print("RUCKUS CACHE TYPE:", type(ruckus_data))
-    print("RUCKUS CACHE VALUE:", ruckus_data)
-
-
+    #print("RUCKUS CACHE TYPE:", type(ruckus_data))
+    #print("RUCKUS CACHE VALUE:", ruckus_data)
     for r in ruckus_data:
-
         desc = (r.get("description") or "").strip()
-
         if desc.startswith("DMH-Booth-"):
-
             booth = desc.replace(
                 "DMH-Booth-",
                 ""
             )
-
             ruckus_map[booth] = r
 
     #
     # Attach switch info
     #
     for row in rows:
-
         booth_group = row.get("booth_group") or ""
-
         booths = [
             b.strip()
             for b in booth_group.split(",")
             if b.strip()
         ]
-
         ruckus = None
         matched_booth = ""
-
         for booth in booths:
             if booth in ruckus_map:
                 matched_booth = booth
                 ruckus = ruckus_map[booth]
                 break
-
         if ruckus:
             row["ruckus_switch"] = ruckus.get("switch")
             row["ruckus_port"] = ruckus.get("port")
             row["ruckus_vlan"] = ruckus.get("vlan")
             row["ruckus_link"] = ruckus.get("link")
             row["ruckus_speed"] = ruckus.get("speed")
-            
             row["matched_booth"] = matched_booth
             row["switch_description"] = ruckus.get(
             "description"
             )
-            
-            
-            
-
             if ruckus.get("link") == "Up":
                 row["physical_status"] = "Up"
             else:
                 row["physical_status"] = "Down"
-
         else:
-
             row["ruckus_switch"] = ""
             row["ruckus_port"] = ""
             row["ruckus_vlan"] = ""
             row["ruckus_link"] = ""
             row["ruckus_speed"] = ""
-
             row["physical_status"] = "No Match"
             row["matched_booth"] = ""
             row["switch_description"] = "" 
-    
-    
-    #
+  
     # Build DPSK lookup by VLAN
     #
-
     #dpsk_data = collect_smartzone_cache()
     dpsk_data = CACHE.get( "smartzone_dpsks",  [])
 
     dpsk_count_by_vlan = {}
-
     for dpsk in dpsk_data:
         try:
             dpsk_vlan = int(dpsk.get("vlan"))
         except (TypeError, ValueError):
             continue
-
         dpsk_count_by_vlan[dpsk_vlan] = (
             dpsk_count_by_vlan.get(dpsk_vlan, 0) + 1
         )
@@ -1143,12 +1165,10 @@ def customers():
     #
     for row in rows:
         customer_vlan = row.get("vlan_id")
-
         try:
             customer_vlan = int(customer_vlan)
         except (TypeError, ValueError):
             customer_vlan = None
-
         dpsk_count = (
             dpsk_count_by_vlan.get(customer_vlan, 0)
             if customer_vlan is not None
@@ -1157,8 +1177,8 @@ def customers():
 
         row["dpsk_count"] = dpsk_count
         row["dpsk_linked"] = "Yes" if dpsk_count else "No"
-    
-  
+
+ 
     for row in rows[:20]:
         booth_group = row.get("booth_group") or ""
         booths = [
@@ -1171,7 +1191,43 @@ def customers():
             if booth in ruckus_map:
                 matched = booth
                 break
-    return rows
+
+    recon = reconciliation()
+    policy_map = {}
+    for r in recon["results"]:
+        cid = r.get("customer_id")
+        if cid:
+            policy_map[cid] = (
+                r.get("reconciliation_status")
+            )            
+    
+    
+    final_rows = []
+
+    for row in rows:
+        final_rows.append({
+            "id": row["id"],
+            "licensee": row["licensee"],
+            "booth_group": row["booth_group"],
+            "vlan_id": row["vlan_id"],
+            "subnet_cidr": row["subnet_cidr"],
+
+            "dpsk_count": row["dpsk_count"],
+            "dpsk_linked": row["dpsk_linked"],
+
+            "ruckus_switch": row["ruckus_switch"],
+            "ruckus_port": row["ruckus_port"],
+
+            "physical_status": row["physical_status"],
+
+            "fortigate_interface":
+                row["fortigate_interface"],
+
+            "status": row["status"]
+        })
+
+    return final_rows
+    #return rows
 
 def refresh_dpsk_cache():
     CACHE["smartzone_dpsks"] = collect_smartzone_cache()
@@ -1267,18 +1323,13 @@ def reconciliation():
 
         if is_ignored(fg):
             continue
-
         name = (fg.get("name") or "").strip()
-
         if name:
             by_name[name] = fg
-
         vlan = fg.get("vlan_id")
         cidr = (fg.get("cidr") or "").strip()
-
         if vlan is not None and cidr:
             by_vlan_subnet[(str(vlan), cidr)] = fg
-
     assigned_names = set()
     
     fg = FortiGateClient()
@@ -1317,7 +1368,6 @@ def reconciliation():
     # CUSTOMER RECONCILIATION
     #
     for c in customers:
-
         interface_name = (
             c.get("fortigate_interface") or ""
         ).strip()
@@ -1329,33 +1379,27 @@ def reconciliation():
             interface_name,
             []
         )
-        
 
         #
         # Match by VLAN+CIDR
         #
         if c.get("vlan_id") is not None and c.get("subnet_cidr"):
-
             fg = by_vlan_subnet.get(
                 (
                     str(c.get("vlan_id")),
                     (c.get("subnet_cidr") or "").strip()
                 )
             )
-
         #
         # Fallback to existing interface assignment
         #
         if not fg and interface_name:
             fg = by_name.get(interface_name)
-
         #
         # Auto-populate interface
         #
         if fg and not interface_name:
-
             interface_name = fg.get("name")
-
             db.execute(
                 """
                 UPDATE customers
@@ -1368,46 +1412,34 @@ def reconciliation():
                     c.get("id")
                 )
             )
-
         status = "MATCH"
-
         if not fg:
-
             status = "NO_VLAN_SUBNET_MATCH"
-
             details.append(
                 "No FortiGate interface matches VLAN + subnet"
             )
-
         else:
-
             assigned_names.add(
                 fg.get("name")
             )
-
             internet_policies = policy_map.get(
                 interface_name,
                 []
             )
-
             #
             # Internet Policy Validation
             #
+
             if not internet_policies:
-
                 status = "NO_INTERNET_POLICY"
-
                 details.append(
                     "No SD-WAN Internet policy found"
                 )
-
             elif any(
                 p.get("status") != "enable"
                 for p in internet_policies
             ):
-
                 status = "DISABLED_INTERNET_POLICY"
-
                 details.append(
                     "Internet policy disabled"
                 )
