@@ -8,10 +8,11 @@ from .importer import import_excel
 from .fortigate import refresh_fortigate_cache, action_plan, FortiGateClient, apply_or_dry_run, FortiGateError
 from .reports import build_report
 from .ruckus import collect_ruckus_cache
-from app.smartzone import collect_smartzone_cache
-
+# main.py
+from app.smartzone import (
+    collect_smartzone_cache
+)
 app=FastAPI(title='CityPoint CMDB v3'); db.init_db(); initialize_pools(); refresh_statuses()
-
 
 
 fg = FortiGateClient()
@@ -68,10 +69,14 @@ class CustomerPayload(BaseModel):
 class TogglePayload(BaseModel):
     interface_name:str; policy_id:str|None=None; enable:bool; apply:bool=False
 
-
+class DpskCreatePayload(BaseModel):
+    vlan: int
+    licensee: str
+    quantity: int = 1
+    group_enabled: bool = True
+     
     
 @app.get('/',response_class=HTMLResponse)
-#@app.get("/")
 def home():
     return render_home()
 
@@ -285,7 +290,7 @@ pre{
     </div>
 </div>
 
-<div id="dpskTab" class="tab">
+<div id="dpskTab" class="tab" style="display:none">
     <h2>DPSK Summary</h2>
     <div id="dpskSummary"></div>
     <hr>
@@ -441,95 +446,89 @@ pre{
     }
 
    
-async function loadSwitches() {
-
-    const body =
-        document.getElementById(
-            "switchesBody"
-        );
-
-    const response =
-        await fetch('/api/switches');
-
-    const data =
-        await response.json();
-
-    body.innerHTML = '';
-
-    data.forEach(sw => {
-
-        body.innerHTML += `
-        <tr>
-            <td>${sw.switch}</td>
-            <td>${sw.port}</td>
-            <td>${sw.description || ''}</td>
-            <td>${sw.vlan || ''}</td>
-            <td>${sw.link || ''}</td>
-            <td>${sw.speed || ''}</td>
-        </tr>
-        `;
-    });
-}
-
-
-async function loadDpskSummary() {
-
-    const r = await fetch("/api/dpsks-summary");
-    const data = await r.json();
-    data.sort((a,b) => a.vlan - b.vlan);
-    let html = `
-    <div class="card">
-        <div class="dashvalue">
-            ${data.length}
-        </div>
-        <div class="dashdetail">
-            DPSK VLANs
-        </div>
-    </div>
-    <table class="table">
-        <thead>
+    async function loadSwitches() {
+        const body =
+            document.getElementById(
+                "switchesBody"
+            );
+        const response =
+            await fetch('/api/switches');
+        const data =
+            await response.json();
+        body.innerHTML = '';
+        data.forEach(sw => {
+            body.innerHTML += `
             <tr>
-                <th>VLAN</th>
-                <th>DPSKs</th>
-                <th>Example Username</th>
-                <th>Latest Created</th>
-                <th>Action</th>
+                <td>${sw.switch}</td>
+                <td>${sw.port}</td>
+                <td>${sw.description || ''}</td>
+                <td>${sw.vlan || ''}</td>
+                <td>${sw.link || ''}</td>
+                <td>${sw.speed || ''}</td>
             </tr>
-        </thead>
-        <tbody>
-    `;
-    data.forEach(row => {
-        html += `
-        <tr>
-            <td>
-                ${row.vlan}
-            </td>
-            <td>
-                ${row.dpsk_count}
-            </td>
-            <td>
-                ${row.sample_username || ""}
-            </td>
-            <td>
-                ${row.latest_created || ""}
-            </td>
-            <td>
-                <button
-                    onclick="loadDpskVlan(${row.vlan})">
-                    View
-                </button>
-            </td>
-        </tr>
+            `;
+        });
+    }
+
+
+    async function loadDpskSummary() {
+
+        const r = await fetch("/api/dpsks-summary");
+        const data = await r.json();
+        data.sort((a,b) => a.vlan - b.vlan);
+        let html = `
+        <div class="card">
+            <div class="dashvalue">
+                ${data.length}
+            </div>
+            <div class="dashdetail">
+                DPSK VLANs
+            </div>
+        </div>
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>VLAN</th>
+                    <th>DPSKs</th>
+                    <th>Example Username</th>
+                    <th>Latest Created</th>
+                    <th>Action</th>
+                </tr>
+            </thead>
+            <tbody>
         `;
-    });
-    html += `
-        </tbody>
-    </table>
-    `;
-    document.getElementById(
-        "dpskSummary"
-    ).innerHTML = html;
-}
+        data.forEach(row => {
+            html += `
+            <tr>
+                <td>
+                    ${row.vlan}
+                </td>
+                <td>
+                    ${row.dpsk_count}
+                </td>
+                <td>
+                    ${row.sample_username || ""}
+                </td>
+                <td>
+                    ${row.latest_created || ""}
+                </td>
+                <td>
+                    <button
+                        onclick="loadDpskVlan(${row.vlan})">
+                        View
+                    </button>
+                </td>
+            </tr>
+            `;
+        });
+        html += `
+            </tbody>
+        </table>
+        `;
+        document.getElementById(
+            "dpskSummary"
+        ).innerHTML = html;
+    }
 
 
 
@@ -564,7 +563,7 @@ async function loadDashboard(){
      style="border-left:5px solid ${
         d.physical.down > 0 ? '#dc2626' : '#16a34a'
      }">
-            <h3>DPSK Coverage</h3>
+            <h3 onclick="showTab('dpskTab')">DPSK Coverage</h3>
             <div class="dashvalue">${d.dpsk.linked}</div>
             <div class="dashdetail">
                 Linked | ${d.dpsk.missing} missing
@@ -586,37 +585,25 @@ async function loadDashboard(){
 }
 
 async function loadDpskVlan(vlan) {
-
     console.log("Loading VLAN", vlan);
-
     const r = await fetch(`/api/dpsks/${vlan}`);
-
     console.log("HTTP", r.status);
-
     const data = await r.json();
-
     console.log("Records", data.length);
-
     let html = `
         <h3>
             VLAN ${vlan}
             (${data.length} DPSKs)
         </h3>
-
         <div style="margin-bottom:10px">
-
-            <button disabled>
-                Create DPSK
-            </button>
-
+<button disabled>
+    Create DPSK
+</button>
             <button disabled>
                 Delete Selected
             </button>
-
         </div>
-
         <table class="table">
-
             <thead>
                 <tr>
                     <th></th>
@@ -626,29 +613,21 @@ async function loadDpskVlan(vlan) {
                     <th>Expires</th>
                 </tr>
             </thead>
-
             <tbody>
     `;
 
     data.forEach(row => {
-
         html += `
             <tr>
-
                 <td>
                     <input
                         type="checkbox"
                         value="${row.id}">
                 </td>
-
                 <td>${row.username}</td>
-
                 <td>${row.passphrase}</td>
-
                 <td>${row.created}</td>
-
                 <td>${row.expires}</td>
-
             </tr>
         `;
     });
@@ -669,6 +648,39 @@ async function loadDpskVlan(vlan) {
     });
 }
 
+async function createDpsk(vlan) {
+
+    const licensee =
+        prompt("Licensee");
+
+    if (!licensee) return;
+
+    const quantity =
+        Number(prompt("Number of DPSKs", "1"));
+
+    if (!quantity || quantity < 1) return;
+
+    const result = await fetch(
+        "/api/dpsks",
+        {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                vlan: vlan,
+                licensee: licensee,
+                quantity: quantity,
+                group_enabled: true
+            })
+        }
+    );
+
+    alert(await result.text());
+
+    await loadDpskSummary();
+    await loadDpskVlan(vlan);
+}
 	
 async function loadDropdowns(){
 	  let d=await j('/api/dropdowns');
@@ -711,7 +723,8 @@ async function refreshAll(){
     await loadDashboard();
     await loadDropdowns();
     await loadCustomers();
-    await loadObjects()
+    await loadObjects();
+    
     }
 
 function setSelect(sel,val){
@@ -959,17 +972,9 @@ def objects():
     refresh_statuses(); return {'booths':db.rows("SELECT b.booth_group,b.status,GROUP_CONCAT(c.licensee, ', ') AS used_by FROM booths b LEFT JOIN customers c ON c.booth_group=b.booth_group AND c.status='active' GROUP BY b.booth_group,b.status ORDER BY b.booth_group"),'vlans':db.rows("SELECT v.vlan_id,v.status,GROUP_CONCAT(c.licensee, ', ') AS used_by FROM vlans v LEFT JOIN customers c ON c.vlan_id=v.vlan_id AND c.status='active' GROUP BY v.vlan_id,v.status ORDER BY v.vlan_id"),'subnets':db.rows("SELECT s.cidr,s.gateway,s.mask,s.status,GROUP_CONCAT(c.licensee, ', ') AS used_by FROM subnets s LEFT JOIN customers c ON c.subnet_cidr=s.cidr AND c.status='active' GROUP BY s.cidr,s.gateway,s.mask,s.status ORDER BY s.cidr")}
 
 
-@app.get("/api/dpsks/refresh")
-def dpsk_refresh():
-    data = collect_smartzone_cache()
-    CACHE["smartzone_dpsks"] = data
-    return {
-        "records": len(data)
-    }
-    
 @app.get("/api/dpsks/{vlan}")
 def api_dpsk_vlan(vlan: int):
-    dpsks = collect_smartzone_cache()
+    dpsks = CACHE.get("smartzone_dpsks", [])
     return [
         d
         for d in dpsks
@@ -979,7 +984,7 @@ def api_dpsk_vlan(vlan: int):
 
 @app.get("/api/dpsks-summary")
 def api_dpsks_summary():
-    dpsks = collect_smartzone_cache()
+    dpsks = CACHE.get("smartzone_dpsks", [])
     vlan_map = {}
     for row in dpsks:
         vlan = row["vlan"]
@@ -1040,6 +1045,11 @@ def customers():
 
 
     ruckus_map = {}
+    
+    
+    print("RUCKUS CACHE TYPE:", type(ruckus_data))
+    print("RUCKUS CACHE VALUE:", ruckus_data)
+
 
     for r in ruckus_data:
 
@@ -1109,11 +1119,11 @@ def customers():
             row["switch_description"] = "" 
     
     
-        #
+    #
     # Build DPSK lookup by VLAN
     #
 
-    dpsk_data = collect_smartzone_cache()
+    #dpsk_data = collect_smartzone_cache()
     dpsk_data = CACHE.get( "smartzone_dpsks",  [])
 
     dpsk_count_by_vlan = {}
@@ -1150,7 +1160,6 @@ def customers():
     
   
     for row in rows[:20]:
-
         booth_group = row.get("booth_group") or ""
         booths = [
             b.strip()
@@ -1163,6 +1172,16 @@ def customers():
                 matched = booth
                 break
     return rows
+
+def refresh_dpsk_cache():
+    CACHE["smartzone_dpsks"] = collect_smartzone_cache()
+    return len(CACHE["smartzone_dpsks"])
+
+@app.get("/api/dpsks/refresh")
+def dpsk_refresh():
+    return {
+        "records": refresh_dpsk_cache()
+    }
 
 def validate_unique_assignment(p: CustomerPayload, exclude_customer_id: int | None = None):
     """Hard-stop duplicate active booth, VLAN, or subnet assignments."""
@@ -1216,7 +1235,6 @@ def fg_refresh():
     
 @app.get('/api/reconciliation')
 def reconciliation():
-
     customers = db.rows("""
       SELECT id,
              licensee,
@@ -1638,10 +1656,13 @@ def fg_toggle(p:TogglePayload):
     if p.policy_id: plans.append(action_plan('policy',p.interface_name,p.policy_id,p.enable))
     res=[apply_or_dry_run(x) if p.apply else {'applied':False,'mode':'dry-run','plan':x} for x in plans]
     db.audit('fg_toggle',p.interface_name,p.model_dump_json(),json.dumps(res)); return {'results':res}
+
 @app.get('/api/report.xlsx')
 def report_xlsx():
-    return StreamingResponse(build_report(),media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',headers={'Content-Disposition':'attachment; filename=citypoint_cmdb_report.xlsx'})
+    return StreamingResponse(build_report(CACHE),media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',headers={'Content-Disposition':'attachment; filename=citypoint_cmdb_report.xlsx'})
 
+          
+            
 @app.get("/api/switches")
 def api_switches():
     return CACHE.get(

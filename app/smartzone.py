@@ -6,6 +6,8 @@ from . import config
 
 urllib3.disable_warnings()
 
+
+
 class SmartZoneClient:
 
     def __init__(self):
@@ -74,13 +76,6 @@ class SmartZoneClient:
 
                 self.wlan_id = wlan["id"]
 
-                print(
-                    f"Found zone={zone['name']} "
-                    f"zone_id={self.zone_id} "
-                    f"ssid={wlan['name']} "
-                    f"wlan_id={self.wlan_id}"
-                )
-
                 return
 
         raise Exception(
@@ -103,12 +98,7 @@ class SmartZoneClient:
         r.raise_for_status()
         return r.json()
     
-    
-    #def collect_smartzone_cache():
-    #    sz = SmartZoneClient()
-    #    sz.login()
-    #    dpsks = sz.get_dpsks()
-    #    return dpsks
+
 
 
 def collect_smartzone_cache():
@@ -127,12 +117,89 @@ def collect_smartzone_cache():
         })
     return results
 
-if __name__ == "__main__":
-    import json
-    sz = SmartZoneClient()
-    sz.login()
-    sz.resolve_ids()
-    print("Zone ID:", sz.zone_id)
-    print("WLAN ID:", sz.wlan_id)
-    data = sz.get_dpsks()
-    print(json.dumps(data, indent=2))
+import secrets
+import string
+
+
+def generate_passphrase(length=8):
+    alphabet = (
+        string.ascii_letters +
+        string.digits
+    )
+
+    return ''.join(
+        secrets.choice(alphabet)
+        for _ in range(length)
+    )
+
+
+def sanitize_username(name):
+    return (
+        name.strip()
+            .replace(" ", "_")
+            .replace("/", "_")
+            .replace("\\", "_")
+    )
+
+
+
+def create_smartzone_dpsk(
+    session,
+    base_url,
+    api_version,
+    zone_id,
+    wlan_id,
+    vlan,
+    username,
+    passphrase,
+    group_enabled=True,
+    service_ticket=None,
+):
+    url = (
+        f"{base_url}/wsg/api/public/{api_version}"
+        f"/rkszones/{zone_id}"
+        f"/wlans/{wlan_id}"
+        f"/dpsk/batchGenUnbound"
+    )
+
+    payload = {
+        "amount": 1,
+        "userName": username,
+        "passphrase": passphrase,
+        "vlanId": int(vlan),
+        "groupDpsk": bool(group_enabled),
+    }
+
+    params = {}
+
+    if service_ticket:
+        params["serviceTicket"] = service_ticket
+
+    response = session.post(
+        url,
+        params=params,
+        json=payload,
+        timeout=30,
+        verify=False,
+    )
+
+    if not response.ok:
+        raise RuntimeError(
+            "SmartZone DPSK creation failed: "
+            f"HTTP {response.status_code}: "
+            f"{response.text}"
+        )
+
+    if not response.content:
+        return {
+            "status": "created"
+        }
+
+    try:
+        return response.json()
+    except ValueError:
+        return {
+            "status": "created",
+            "response": response.text,
+        }
+        

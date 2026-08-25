@@ -93,9 +93,8 @@ def collect_ruckus_cache():
             )
         finally:
             client.close()
-            
-    print(results[:5])
-    return results
+
+    return results            
 
 def parse_interfaces(output, switch_name):
     interfaces = []
