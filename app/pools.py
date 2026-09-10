@@ -10,43 +10,42 @@ def generated_subnets():
     return out
 def initialize_pools():
     for vlan in list(range(190,200))+list(range(300,351)):
-        db.execute("INSERT OR IGNORE INTO vlans(vlan_id,status) VALUES (?, 'available')", (vlan,))
+        db.execute("INSERT IGNORE INTO vlans(vlan_id,status) VALUES (?, 'available')", (vlan,))
     for cidr in generated_subnets():
-        db.execute("INSERT OR IGNORE INTO subnets(cidr,gateway,mask,status) VALUES (?, ?, ?, 'available')", (cidr, first_usable(cidr), mask(cidr)))
+        db.execute("INSERT IGNORE INTO subnets(cidr,gateway,mask,status) VALUES (?, ?, ?, 'available')", (cidr, first_usable(cidr), mask(cidr)))
 def refresh_statuses():
 
     db.execute("UPDATE booths SET status='available'")
     db.execute("UPDATE vlans SET status='available'")
     db.execute("UPDATE subnets SET status='available'")
 
-    for r in db.rows(
+    db.execute(
         """
-        SELECT licensee,
-               booth_group,
-               vlan_id,
-               subnet_cidr
-        FROM customers
-        WHERE status='active'
+        UPDATE booths SET status='used'
+        WHERE booth_group IN (
+            SELECT DISTINCT booth_group FROM customers
+            WHERE status='active' AND booth_group IS NOT NULL AND booth_group<>''
+        )
         """
-    ):
-
-        if r.get('booth_group'):
-            db.execute(
-                "UPDATE booths SET status='used' WHERE booth_group=?",
-                (r['booth_group'],)
-            )
-
-        if r.get('vlan_id'):
-            db.execute(
-                "UPDATE vlans SET status='used' WHERE vlan_id=?",
-                (r['vlan_id'],)
-            )
-
-        if r.get('subnet_cidr'):
-            db.execute(
-                "UPDATE subnets SET status='used' WHERE cidr=?",
-                (r['subnet_cidr'],)
-            )
+    )
+    db.execute(
+        """
+        UPDATE vlans SET status='used'
+        WHERE vlan_id IN (
+            SELECT DISTINCT vlan_id FROM customers
+            WHERE status='active' AND vlan_id IS NOT NULL AND vlan_id<>0
+        )
+        """
+    )
+    db.execute(
+        """
+        UPDATE subnets SET status='used'
+        WHERE cidr IN (
+            SELECT DISTINCT subnet_cidr FROM customers
+            WHERE status='active' AND subnet_cidr IS NOT NULL AND subnet_cidr<>''
+        )
+        """
+    )
 
     #
     # Reserved infrastructure VLANs

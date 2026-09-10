@@ -1047,7 +1047,7 @@ def dropdowns():
 ),'subnets':db.rows('SELECT cidr,gateway,status FROM subnets ORDER BY cidr'),'fg_interfaces':db.rows('SELECT name FROM fortigate_interfaces ORDER BY name')}
 @app.get('/api/objects')
 def objects():
-    refresh_statuses(); return {'booths':db.rows("SELECT b.booth_group,b.status,GROUP_CONCAT(c.licensee, ', ') AS used_by FROM booths b LEFT JOIN customers c ON c.booth_group=b.booth_group AND c.status='active' GROUP BY b.booth_group,b.status ORDER BY b.booth_group"),'vlans':db.rows("SELECT v.vlan_id,v.status,GROUP_CONCAT(c.licensee, ', ') AS used_by FROM vlans v LEFT JOIN customers c ON c.vlan_id=v.vlan_id AND c.status='active' GROUP BY v.vlan_id,v.status ORDER BY v.vlan_id"),'subnets':db.rows("SELECT s.cidr,s.gateway,s.mask,s.status,GROUP_CONCAT(c.licensee, ', ') AS used_by FROM subnets s LEFT JOIN customers c ON c.subnet_cidr=s.cidr AND c.status='active' GROUP BY s.cidr,s.gateway,s.mask,s.status ORDER BY s.cidr")}
+    refresh_statuses(); return {'booths':db.rows("SELECT b.booth_group,b.status,GROUP_CONCAT(c.licensee SEPARATOR ', ') AS used_by FROM booths b LEFT JOIN customers c ON c.booth_group=b.booth_group AND c.status='active' GROUP BY b.booth_group,b.status ORDER BY b.booth_group"),'vlans':db.rows("SELECT v.vlan_id,v.status,GROUP_CONCAT(c.licensee SEPARATOR ', ') AS used_by FROM vlans v LEFT JOIN customers c ON c.vlan_id=v.vlan_id AND c.status='active' GROUP BY v.vlan_id,v.status ORDER BY v.vlan_id"),'subnets':db.rows("SELECT s.cidr,s.gateway,s.mask,s.status,GROUP_CONCAT(c.licensee SEPARATOR ', ') AS used_by FROM subnets s LEFT JOIN customers c ON c.subnet_cidr=s.cidr AND c.status='active' GROUP BY s.cidr,s.gateway,s.mask,s.status ORDER BY s.cidr")}
 
 
 @app.get("/api/dpsks/{vlan}")

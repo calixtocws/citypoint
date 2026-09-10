@@ -18,6 +18,14 @@ Customer-list workflow for CityPoint booth/VLAN/subnet/FortiGate assignments.
 
 ## Run
 
+Requires a MySQL server reachable with the credentials you set in `.env`
+(`MYSQL_HOST`, `MYSQL_PORT`, `MYSQL_USER`, `MYSQL_PASSWORD`, `MYSQL_DATABASE`).
+Create the database first:
+
+```sql
+CREATE DATABASE citypoint_cmdb;
+```
+
 ```powershell
 py -3.12 -m venv .venv
 .\.venv\Scripts\Activate.ps1
@@ -25,6 +33,13 @@ pip install -r requirements.txt
 Copy-Item .env.example .env
 notepad .env
 python -m uvicorn app.main:app --reload
+```
+
+The app creates its tables on startup. If you have an existing
+`data/citypoint_cmdb.sqlite3` from a previous version, copy its data over with:
+
+```powershell
+python -m scripts.migrate_sqlite_to_mysql
 ```
 
 Open `http://127.0.0.1:8000`.

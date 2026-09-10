@@ -1,7 +1,11 @@
 import os
 from dotenv import load_dotenv
 load_dotenv()
-DATABASE_PATH = os.getenv("DATABASE_PATH", "./data/citypoint_cmdb.sqlite3")
+MYSQL_HOST = os.getenv("MYSQL_HOST", "127.0.0.1")
+MYSQL_PORT = int(os.getenv("MYSQL_PORT", "3306"))
+MYSQL_USER = os.getenv("MYSQL_USER", "root")
+MYSQL_PASSWORD = os.getenv("MYSQL_PASSWORD", "")
+MYSQL_DATABASE = os.getenv("MYSQL_DATABASE", "citypoint_cmdb")
 FORTIGATE_BASE_URL = os.getenv("FORTIGATE_BASE_URL", "").rstrip("/")
 FORTIGATE_API_TOKEN = os.getenv("FORTIGATE_API_TOKEN", "")
 FORTIGATE_VDOM = os.getenv("FORTIGATE_VDOM", "root")

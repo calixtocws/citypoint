@@ -161,9 +161,9 @@ def build_report(cache):
     style(ws2)
     ws3=wb.create_sheet('Object Pools'); 
     ws3.append(['Object Type','Value','Gateway','Status','Used By'])
-    for r in db.rows("SELECT v.vlan_id AS value,v.status,GROUP_CONCAT(c.licensee, ', ') AS used_by FROM vlans v LEFT JOIN customers c ON c.vlan_id=v.vlan_id AND c.status='active' GROUP BY v.vlan_id,v.status ORDER BY v.vlan_id"): ws3.append(['VLAN',r['value'],'',r['status'],r['used_by']])
-    for r in db.rows("SELECT s.cidr AS value,s.gateway,s.status,GROUP_CONCAT(c.licensee, ', ') AS used_by FROM subnets s LEFT JOIN customers c ON c.subnet_cidr=s.cidr AND c.status='active' GROUP BY s.cidr,s.gateway,s.status ORDER BY s.cidr"): ws3.append(['Subnet',r['value'],r['gateway'],r['status'],r['used_by']])
-    for r in db.rows("SELECT b.booth_group AS value,b.status,GROUP_CONCAT(c.licensee, ', ') AS used_by FROM booths b LEFT JOIN customers c ON c.booth_group=b.booth_group AND c.status='active' GROUP BY b.booth_group,b.status ORDER BY b.booth_group"): ws3.append(['Booth Group',r['value'],'',r['status'],r['used_by']])
+    for r in db.rows("SELECT v.vlan_id AS value,v.status,GROUP_CONCAT(c.licensee SEPARATOR ', ') AS used_by FROM vlans v LEFT JOIN customers c ON c.vlan_id=v.vlan_id AND c.status='active' GROUP BY v.vlan_id,v.status ORDER BY v.vlan_id"): ws3.append(['VLAN',r['value'],'',r['status'],r['used_by']])
+    for r in db.rows("SELECT s.cidr AS value,s.gateway,s.status,GROUP_CONCAT(c.licensee SEPARATOR ', ') AS used_by FROM subnets s LEFT JOIN customers c ON c.subnet_cidr=s.cidr AND c.status='active' GROUP BY s.cidr,s.gateway,s.status ORDER BY s.cidr"): ws3.append(['Subnet',r['value'],r['gateway'],r['status'],r['used_by']])
+    for r in db.rows("SELECT b.booth_group AS value,b.status,GROUP_CONCAT(c.licensee SEPARATOR ', ') AS used_by FROM booths b LEFT JOIN customers c ON c.booth_group=b.booth_group AND c.status='active' GROUP BY b.booth_group,b.status ORDER BY b.booth_group"): ws3.append(['Booth Group',r['value'],'',r['status'],r['used_by']])
     style(ws3); 
     
     

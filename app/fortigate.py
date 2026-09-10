@@ -35,7 +35,7 @@ def refresh_fortigate_cache():
         name=i.get('name')
         if not name: continue
         cidr,gw=ip_to_cidr(i.get('ip')); p=bysrc.get(name,{})
-        db.execute("INSERT OR REPLACE INTO fortigate_interfaces(name,vlan_id,cidr,gateway,ip_raw,policy_id,policy_name,policy_status,interface_status,raw_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (name,i.get('vlanid'),cidr,gw,i.get('ip'),str(p.get('policyid','')),p.get('name',''),p.get('status',''),i.get('status',''),json.dumps(i)))
+        db.execute("REPLACE INTO fortigate_interfaces(name,vlan_id,cidr,gateway,ip_raw,policy_id,policy_name,policy_status,interface_status,raw_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (name,i.get('vlanid'),cidr,gw,i.get('ip'),str(p.get('policyid','')),p.get('name',''),p.get('status',''),i.get('status',''),json.dumps(i)))
     return {'interfaces':len(ifaces),'sdwan_policies':len(bysrc)}
 def action_plan(kind,interface_name,policy_id=None,enable=True):
     if kind=='interface': return {'method':'PUT','path':f'/api/v2/cmdb/system/interface/{interface_name}','payload':{'status':'up' if enable else 'down'}}

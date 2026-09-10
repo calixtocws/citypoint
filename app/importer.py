@@ -52,7 +52,7 @@ def import_excel(path):
     for r in range(2,ws.max_row+1):
         booth=booth_group_key(ws.cell(r,1).value); licensee=clean(ws.cell(r,2).value); legal=clean(ws.cell(r,3).value); vlan_raw=clean(ws.cell(r,4).value); vlans=parse_vlans(vlan_raw)
         if booth:
-            db.execute("INSERT OR IGNORE INTO booths(booth_group,status) VALUES (?, 'available')", (booth,)); imported['booths']+=1
+            db.execute("INSERT IGNORE INTO booths(booth_group,status) VALUES (?, 'available')", (booth,)); imported['booths']+=1
         if not licensee or licensee.upper()=='VACANT': continue
         chosen_vlan=None; notes=["Imported from original workbook"]
         if len(vlans)==1: chosen_vlan=vlans[0]
