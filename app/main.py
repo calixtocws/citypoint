@@ -253,6 +253,10 @@ pre{
 <div id="dashboardTab">
     <div class="card">
         <h2>Dashboard</h2>
+        <button id="updateDataBtn" onclick="updateAllData()">
+            Update Data (DPSK / Switches / FortiGate)
+        </button>
+        <span id="updateDataStatus"></span>
         <div id="dashboard"
              class="dashgrid">
             <p>Loading...</p>
@@ -775,7 +779,30 @@ async function refreshAll(){
     await loadDropdowns();
     await loadCustomers();
     await loadObjects();
-    
+
+    }
+
+async function updateAllData(){
+    let btn=document.getElementById('updateDataBtn');
+    let status=document.getElementById('updateDataStatus');
+    btn.disabled=true;
+    status.textContent='Updating...';
+    try{
+        let [dpsk,switches,fg]=await Promise.all([
+            j('/api/dpsks/refresh'),
+            j('/api/ruckus/refresh'),
+            j('/api/fortigate/refresh',{method:'POST'})
+        ]);
+        await refreshAll();
+        status.textContent=`Updated ${new Date().toLocaleTimeString()} — `
+            +`DPSK: ${dpsk.records??dpsk.error??'?'} | `
+            +`Switches: ${switches.records??switches.error??'?'} | `
+            +`FortiGate: ${fg.interfaces??fg.error??'?'} interfaces`;
+    }catch(e){
+        status.textContent='Update failed: '+e;
+    }finally{
+        btn.disabled=false;
+    }
     }
 
 function setSelect(sel,val){

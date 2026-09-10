@@ -30,6 +30,6 @@ SMARTZONE_SSID = "Dekalb_Market"
 SMARTZONE_DPSK_WLANS = [
     {
         "zone": "Citypoint",
-        "ssid": "CityPoint"
+        "ssid": "Dekalb_Market"
     }
 ]
