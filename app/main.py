@@ -129,6 +129,17 @@ button.nav{
     font-weight:600
 }
 
+a.nav{
+    display:inline-block;
+    background:#1f4e78;
+    color:#fff;
+    font-weight:600;
+    text-decoration:none;
+    padding:7px 10px;
+    border-radius:5px;
+    margin:3px
+}
+
 input,select{
     padding:6px;
     margin:3px;
@@ -216,6 +227,9 @@ pre{
             onclick="showTab('dashboardTab')">
     Dashboard
     </button>
+    <a class="nav" href="http://10.40.53.111">
+    WiFi Portal
+    </a>
 
     <button class="nav"
             onclick="showTab('customersTab')">
